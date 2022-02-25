@@ -63,9 +63,8 @@ def get_equipped(cur, rid):
     cur.execute('SELECT slot, name FROM gear WHERE owner_id = ? AND equipped',
                 (rid,))
     gear = dict(cur.fetchall())
-    slots = ('main_hand', 'dress', 'knickknack', 'finger')
-    assert not set(gear).difference(slots), slots
-    return (gear[i] for i in slots if i in gear)
+    assert not set(gear).difference(cr_conf.slots), cr_conf.slots
+    return (gear[i] for i in cr_conf.slots if i in gear)
 
 
 def skew_stats(stats):

@@ -6,6 +6,8 @@ import os
 
 appname = 'crutil'
 
+slots = ('main_hand', 'dress', 'knickknack', 'finger')
+
 
 class CRConf():
     def __init__(self):

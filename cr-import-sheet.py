@@ -57,9 +57,28 @@ def import_sheet(db):
         len(raiders.get('values', ())), raiders_range))
     cur.execute('BEGIN TRANSACTION')
     for row in raiders['values']:
-        rid, level = map(int, row[:2])
-        stats = tuple(int(i) if len(i) else 0 for i in row[2:])
-        stats = (stats + (0, 0, 0, 0, 0, 0))[:6]
+        try:
+            rid, level = map(int, row[:2])
+            stats = tuple(int(i) if len(i) else 0 for i in row[2:])
+            stats = (stats + (0, 0, 0, 0, 0, 0))[:6]
+        except ValueError:
+            print('  skipping bad row in %s tab: %s' % (
+                cf.goog_raider_tab, ','.join(row)))
+            continue
+        cur.execute('''SELECT name, level,
+            strength, intelligence, agility, wisdom, charm, luck
+            FROM raiders WHERE id = ?''', (rid,))
+        old = cur.fetchall()
+        if len(old) == 0:
+            print('  skipping unknown raider id %d' % (rid,))
+            continue
+        old_name, old_level = old[0][:2]
+        old_stats = old[0][2:]
+        if old_level > level or any(o > n for o, n in zip(old_stats, stats)):
+            print(('  skipping update for raider [%d] %s - ' +
+                   'values on blockchain are higher than spreadsheet') % (
+                       old_level, old_name))
+            continue
         cur.execute('''UPDATE raiders SET strength = ?, intelligence = ?,
             agility = ?, wisdom = ?, charm = ?, luck = ?, level = ?
             WHERE id = ?''', (stats + (level, rid)))
@@ -73,9 +92,18 @@ def import_sheet(db):
     cur.execute('BEGIN TRANSACTION')
     cur.execute('DELETE FROM gear WHERE source = ?', (source,))
     for row in gear['values']:
-        rid, name, slot = row[:3]
-        stats = tuple(int(i) if len(i) else 0 for i in row[3:])
-        stats = (stats + (0, 0, 0, 0, 0, 0))[:6]
+        try:
+            rid = int(row[0])
+            name = row[1]
+            slot = row[2].lower()
+            assert len(name)
+            assert slot in cr_conf.slots
+            stats = tuple(int(i) if len(i) else 0 for i in row[3:])
+            stats = (stats + (0, 0, 0, 0, 0, 0))[:6]
+        except (ValueError, IndexError, AssertionError):
+            print('skipping bad row in %s tab: %s' % (
+                cf.goog_gear_tab, ','.join(row)))
+            continue
         cur.execute('''INSERT INTO gear (owner_id, name, slot, source,
             strength, intelligence, agility, wisdom, charm, luck) VALUES (
             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
