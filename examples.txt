@@ -1,0 +1,12 @@
+Initial setup:
+./setup.sh
+./cr-import.py -g
+
+List raiders:
+./cr-report.py
+
+Show raider gear:
+./cr-report.py -r <raider-id>
+
+Pull spreadsheet data and report best gear:
+./cr-import-sheet.py; ./cr-report.py -b -r <raider-id>
