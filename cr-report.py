@@ -55,10 +55,8 @@ def show_all_raiders(db):
         FROM raiders ORDER BY level DESC, id''')
     raiders = list(cur.fetchall())
     for id, name, lvl, gen, race in raiders:
-        wearing = get_equipped(cur, id)
-        print('%-*d  [%d] %-#*s - gen %d %s wearing %s' % (
-            idlen, id, lvl, namelen, name, gen, race,
-            ', '.join(wearing) if wearing else 'nothing'))
+        print('%-*d  [%d] %-#*s - gen %d %s' % (
+            idlen, id, lvl, namelen, name, gen, race))
 
 
 def get_equipped(cur, rid):
@@ -93,10 +91,7 @@ def calc_best_gear(db, rid, count):
     row = cur.fetchone()
     name, lvl, gen, race = row[:4]
     base_stats = row[4:]
-    wearing = get_equipped(cur, rid)
-    print('%d  [%d] %s  - gen %d %s wearing %s' % (
-        rid, lvl, name, gen, race,
-        ', '.join(wearing) if wearing else 'nothing'))
+    print('%d  [%d] %s  - gen %d %s' % (rid, lvl, name, gen, race))
 
     cur.execute('SELECT MAX(LENGTH(name)) FROM gear WHERE owner_id = ?',
                 (rid,))
@@ -161,10 +156,7 @@ def show_raider(db, rid):
     row = cur.fetchone()
     name, lvl, gen, race = row[:4]
     base_stats = row[4:]
-    wearing = get_equipped(cur, rid)
-    print('%d  [%d] %s  - gen %d %s wearing %s' % (
-        rid, lvl, name, gen, race,
-        ', '.join(wearing) if wearing else 'nothing'))
+    print('%d  [%d] %s  - gen %d %s' % (rid, lvl, name, gen, race))
 
     cur.execute('SELECT MAX(LENGTH(name)) FROM gear WHERE owner_id = ?',
                 (rid,))
