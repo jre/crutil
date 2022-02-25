@@ -45,11 +45,11 @@ def setupdb(db, raiders=True, gear=True):
 
 
 def get_raider_nfts():
-    print('querying polygon NFTs')
+    print('querying polygon NFTs via alchemy')
     r = requests.get('%s/%s/getNFTs/?owner=%s&contractAddresses[]=%s' % (
         cf.alchemy_api_url, cf.alchemy_api_key, cf.nft_owner, cf.nft_contract))
     data = r.json()
-    print('found %d NFTs' % (data['totalCount'],))
+    print('found %d raider NFTs' % (data['totalCount'],))
     for nft in data['ownedNfts']:
         if nft['contract']['address'] == cf.nft_contract:
             yield nft['id']['tokenId']
@@ -75,12 +75,13 @@ def import_one_raider(db, rid):
 
 
 def import_raider_meta(cur, tokenid):
-    print('querying polygon NFT %s' % (tokenid,))
     r = requests.get('%s/%s/getNFTMetadata/?contractAddress=%s&tokenId=%s' % (
         cf.alchemy_api_url, cf.alchemy_api_key, cf.nft_contract, tokenid))
     data = r.json()
     # XXX fetch data['tokenUri']['gateway'] if metadata missing
-    print('  found raider %(id)d %(name)s' % data['metadata'])
+    print('queried polygon NFT %s for raider %-8d %s' % (
+        tokenid, data.get('metadata', {}).get('id'),
+        data.get('metadata', {}).get('name')))
     params = {i['trait_type']: i['value']
               for i in data['metadata']['attributes'] if 'value' in i}
     params['id'] = data['metadata']['id']
