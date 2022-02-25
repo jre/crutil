@@ -6,6 +6,8 @@ git pull
 
 Initial setup:
 ./setup.sh
+
+Build database from chain and cr guru:
 ./cr-import.py -g
 
 List raiders:
