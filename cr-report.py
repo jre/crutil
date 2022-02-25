@@ -26,7 +26,8 @@ def derive_stats(level, base):
         (math.tanh(((int * 0.5) + (luck * 4)) / (level + 100)) *
          ((level_3_sqrt / 100) + 0.1))
     # melee crit
-    mc = (math.pow(math.tanh((int + (dex * 2) + (luck * 4)) / (level + 100)), 2) *
+    mc = (math.pow(math.tanh((int + (dex * 2) + (luck * 4)) /
+                             (level + 100)), 2) *
           (level_3_sqrt + 25)) + \
         (math.tanh((luck * 4) / (level + 100)) * (level_3_sqrt + 10))
     # crit resist
@@ -35,7 +36,8 @@ def derive_stats(level, base):
         (math.tanh(((str * 0.5) + (chr * 6)) / (level + 100)) *
          (level_3_sqrt + 10))
     # evade chance
-    ec = (math.pow(math.tanh(((dex * 3) + (luck * 2)) / (level + 100)), 2) * 40) + \
+    ec = (math.pow(math.tanh(((dex * 3) + (luck * 2)) /
+                             (level + 100)), 2) * 40) + \
         (math.tanh(((dex * 0.5) + (luck * 6)) / (level + 100)) * 10) + \
         level_3_sqrt
     # melee resist
@@ -105,8 +107,8 @@ def calc_best_gear(db, rid, count):
     raw_stats = base_stats
     for row in cur.fetchall():
         raw_stats = tuple(i + j for i, j in zip(raw_stats, row))
-    eff_stats = skew_stats(raw_stats)
-    der_stats = derive_stats(lvl, eff_stats)
+    # eff_stats = skew_stats(raw_stats)
+    # der_stats = derive_stats(lvl, eff_stats)
 
     gear = {}
     for slot in ('dress', 'main_hand', 'finger'):
@@ -116,10 +118,6 @@ def calc_best_gear(db, rid, count):
         gear[slot] = list(remove_dups(cur.fetchall()))
         if len(gear[slot]) == 0:
             gear[slot].append(('nothing (%s)' % (slot,), 0, 0, 0, 0, 0, 0))
-
-    #print(weapons)
-    #print(dress)
-    #print(rings)
 
     combos = []
     for weap_row in gear['main_hand']:
@@ -134,7 +132,6 @@ def calc_best_gear(db, rid, count):
                 new_eff_stats = skew_stats(
                     i + j + k + l for i, j, k, l in
                     zip(raw_stats, weap_stats, dress_stats, ring_stats))
-                #print((weap_row, dress_row, ring_row))
                 new_der_stats = derive_stats(lvl, new_eff_stats)
                 combos.append((sum(new_der_stats), dress_name, dress_stats,
                                weap_name, weap_stats, ring_name, ring_stats,
@@ -146,12 +143,14 @@ def calc_best_gear(db, rid, count):
         'hp', 'mindamg', 'maxdamg', 'hitchan', 'hitfrst', 'critmul', 'melcrit',
         'critrst', 'evade', 'melrst', 'total'))
     print('%-*s  %s' % (namelen, '', hdr))
-    for total, dname, dstats, wname, wstats, rname, rstats, efstats, derstats in combos[:count]:
+    for (total, dname, dstats, wname, wstats, rname, rstats,
+         efstats, derstats) in combos[:count]:
         print('%-*s  %s\n%-*s  %s\n%-*s  %s\n%-*s  %s\n' % (
             namelen, wname, ' '.join('%7d' % i for i in wstats),
             namelen, dname, ' '.join('%7d' % i for i in dstats),
             namelen, rname, ' '.join('%7d' % i for i in rstats),
-            namelen, '', ' '.join('%7d' % i for i in efstats + derstats + (total,))))
+            namelen, '', ' '.join('%7d' % i for i in
+                                  efstats + derstats + (total,))))
 
 
 def show_raider(db, rid):
@@ -182,10 +181,6 @@ def show_raider(db, rid):
     eff_stats = skew_stats(raw_stats)
     der_stats = derive_stats(lvl, eff_stats)
 
-    #print(base_stats)
-    #print(raw_stats)
-    #print(eff_stats)
-
     hdr = ' '.join('%7s' % i for i in (
         'str', 'int', 'dex', 'wis', 'chr', 'luck',
         'hp', 'mindamg', 'maxdamg', 'hitchan', 'hitfrst', 'critmul', 'melcrit',
@@ -203,10 +198,8 @@ def show_raider(db, rid):
                          zip(raw_stats, slot_stats, item_stats))
         new_eff_stats = skew_stats(new_raw_stats)
         new_der_stats = derive_stats(lvl, new_eff_stats)
-        stats_diff = tuple(j - i for i, j in zip(eff_stats + der_stats,
-                                                 new_eff_stats + new_der_stats))
-        #print(raw_stats, slot_stats, item_stats, stats_diff)
-        #print('%-*s %6.0f %6d %6d %6d %6d %6d' % ((namelen, '') + row[2:]))
+        stats_diff = tuple(j - i for i, j in zip(
+            eff_stats + der_stats, new_eff_stats + new_der_stats))
         print('%-*s  %s' % (
             namelen, name, ' '.join(fmt_stat_diff(i, 7) for i in stats_diff)))
 
