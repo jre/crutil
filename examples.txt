@@ -1,3 +1,9 @@
+Note: first you will need to change into the crutils folder:
+cd crutils
+
+To update crutils:
+git pull
+
 Initial setup:
 ./setup.sh
 ./cr-import.py -g
