@@ -101,8 +101,13 @@ def import_sheet(db):
             stats = tuple(int(i) if len(i) else 0 for i in row[3:])
             stats = (stats + (0, 0, 0, 0, 0, 0))[:6]
         except (ValueError, IndexError, AssertionError):
-            print('skipping bad row in %s tab: %s' % (
+            print('  skipping bad row in %s tab: %s' % (
                 cf.goog_gear_tab, ','.join(row)))
+            continue
+        cur.execute('''SELECT name, level FROM raiders WHERE id = ?''', (rid,))
+        old = cur.fetchall()
+        if len(old) == 0:
+            print('  skipping gear for unknown raider id %d' % (rid,))
             continue
         cur.execute('''INSERT INTO gear (owner_id, name, slot, source,
             strength, intelligence, agility, wisdom, charm, luck) VALUES (
