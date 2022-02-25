@@ -1,5 +1,5 @@
 Note: first you will need to change into the crutils folder:
-cd crutils
+cd crutil
 
 To update crutils:
 git pull
