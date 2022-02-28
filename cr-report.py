@@ -5,7 +5,7 @@ import math
 import sys
 
 cr_conf = __import__('cr-conf')
-cf = cr_conf.CRConf()
+cf = cr_conf.conf
 
 
 def derive_stats(level, base):
@@ -208,6 +208,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-r', dest='raider',
                         help='Raider name or id')
+    parser.add_argument('-u', dest='update',
+                        default=False, action='store_true',
+                        help='Update raider data first')
     parser.add_argument('-b', dest='best',
                         default=False, action='store_true',
                         help='Calculate best gear for raider')
@@ -219,6 +222,7 @@ def main():
         print('error: please run ./cr-conf.py to configure')
         sys.exit(1)
     db = sqlite3.connect(cf.db_path)
+
     raider = None
     if args.raider is not None:
         raider = findraider(db, args.raider)
@@ -226,6 +230,9 @@ def main():
             print('No raider named "%s" found' % (args.raider,))
             parser.print_usage()
             sys.exit(1)
+
+    if args.update:
+        __import__('cr-import').import_or_update(db, raider=raider, gear=True)
 
     if args.best:
         if raider is None:

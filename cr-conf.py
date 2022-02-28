@@ -117,6 +117,9 @@ class CRConf():
         raise ValueError(data['result'])
 
 
+conf = CRConf()
+
+
 def main():
     cf = CRConf()
     print('loading config...')

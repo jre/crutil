@@ -5,7 +5,7 @@ import argparse
 import sys
 
 cr_conf = __import__('cr-conf')
-cf = cr_conf.CRConf()
+cf = cr_conf.conf
 
 
 def setupdb(db, raiders=True, gear=True):
@@ -179,6 +179,15 @@ def findraider(db, ident):
             return row[0][0]
 
 
+def import_or_update(db, raider=None, gear=False):
+    if raider is None:
+        import_all_raiders(db)
+    else:
+        import_one_raider(db, raider)
+    if gear:
+        import_raider_gear(db, raider)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-r', dest='raider',
@@ -191,23 +200,20 @@ def main():
     if not cf.load_config():
         print('error: please run ./cr-conf.py to configure')
         sys.exit(1)
+
     cf.makedirs()
     db = sqlite3.connect(cf.db_path)
     setupdb(db)
 
-    if args.raider is None:
-        import_all_raiders(db)
-        if args.gear:
-            import_raider_gear(db)
-    else:
+    raider = None
+    if args.raider is not None:
         raider = findraider(db, args.raider)
         if raider is None:
             print('No raider named "%s" found' % (args.raider,))
             parser.print_usage()
             sys.exit(1)
-        import_one_raider(db, raider)
-        if args.gear:
-            import_raider_gear(db, raider)
+
+    import_or_update(db, raider=raider, gear=args.gear)
 
 
 if __name__ == '__main__':
