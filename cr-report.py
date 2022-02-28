@@ -55,8 +55,10 @@ def show_all_raiders(db):
         FROM raiders ORDER BY level DESC, id''')
     raiders = list(cur.fetchall())
     for id, name, lvl, gen, race in raiders:
-        print('%-*d  [%d] %-#*s - gen %d %s' % (
-            idlen, id, lvl, namelen, name, gen, race))
+        wearing = get_equipped(cur, id)
+        print('%-*d  [%d] %-#*s - gen %d %s wearing %s' % (
+            idlen, id, lvl, namelen, name, gen, race,
+            ', '.join(wearing) if wearing else 'nothing'))
 
 
 def get_equipped(cur, rid):
@@ -64,7 +66,7 @@ def get_equipped(cur, rid):
                 (rid,))
     gear = dict(cur.fetchall())
     assert not set(gear).difference(cr_conf.slots), cr_conf.slots
-    return (gear[i] for i in cr_conf.slots if i in gear)
+    return tuple(gear[i] for i in cr_conf.slots if i in gear)
 
 
 def skew_stats(stats):
@@ -91,7 +93,10 @@ def calc_best_gear(db, rid, count):
     row = cur.fetchone()
     name, lvl, gen, race = row[:4]
     base_stats = row[4:]
-    print('%d  [%d] %s  - gen %d %s' % (rid, lvl, name, gen, race))
+    wearing = get_equipped(cur, rid)
+    print('%d  [%d] %s  - gen %d %s wearing %s' % (
+        rid, lvl, name, gen, race,
+        ', '.join(wearing) if wearing else 'nothing'))
 
     cur.execute('SELECT MAX(LENGTH(name)) FROM gear WHERE owner_id = ?',
                 (rid,))
@@ -102,8 +107,8 @@ def calc_best_gear(db, rid, count):
     raw_stats = base_stats
     for row in cur.fetchall():
         raw_stats = tuple(i + j for i, j in zip(raw_stats, row))
-    # eff_stats = skew_stats(raw_stats)
-    # der_stats = derive_stats(lvl, eff_stats)
+    cur_eff_stats = skew_stats(raw_stats)
+    cur_der_stats = derive_stats(lvl, cur_eff_stats)
 
     gear = {}
     for slot in ('dress', 'main_hand', 'finger'):
@@ -126,7 +131,7 @@ def calc_best_gear(db, rid, count):
                 ring_stats = ring_row[1:]
                 new_eff_stats = skew_stats(
                     i + j + k + l for i, j, k, l in
-                    zip(raw_stats, weap_stats, dress_stats, ring_stats))
+                    zip(base_stats, weap_stats, dress_stats, ring_stats))
                 new_der_stats = derive_stats(lvl, new_eff_stats)
                 combos.append((sum(new_der_stats), dress_name, dress_stats,
                                weap_name, weap_stats, ring_name, ring_stats,
@@ -137,15 +142,18 @@ def calc_best_gear(db, rid, count):
         'str', 'int', 'dex', 'wis', 'chr', 'luck',
         'hp', 'mindamg', 'maxdamg', 'hitchan', 'hitfrst', 'critmul', 'melcrit',
         'critrst', 'evade', 'melrst', 'total'))
+    cur_stats_line = cur_eff_stats + cur_der_stats + (sum(cur_der_stats),)
     print('%-*s  %s' % (namelen, '', hdr))
     for (total, dname, dstats, wname, wstats, rname, rstats,
          efstats, derstats) in combos[:count]:
-        print('%-*s  %s\n%-*s  %s\n%-*s  %s\n%-*s  %s\n' % (
+        statsline = efstats + derstats + (total,)
+        stats_diff = tuple(j - i for i, j in zip(cur_stats_line, statsline))
+        print('%-*s  %s\n%-*s  %s\n%-*s  %s\n%-*s  %s\n%-*s  %s\n' % (
             namelen, wname, ' '.join('%7d' % i for i in wstats),
             namelen, dname, ' '.join('%7d' % i for i in dstats),
             namelen, rname, ' '.join('%7d' % i for i in rstats),
-            namelen, '', ' '.join('%7d' % i for i in
-                                  efstats + derstats + (total,))))
+            namelen, '', ' '.join('%7d' % i for i in statsline),
+            namelen, '', ' '.join(fmt_stat_diff(i, 7) for i in stats_diff)))
 
 
 def show_raider(db, rid):
@@ -155,7 +163,11 @@ def show_raider(db, rid):
         FROM raiders WHERE id = ?''', (rid,))
     row = cur.fetchone()
     name, lvl, gen, race = row[:4]
-    print('%d  [%d] %s  - gen %d %s' % (rid, lvl, name, gen, race))
+    base_stats = row[4:]
+    wearing = get_equipped(cur, rid)
+    print('%d  [%d] %s  - gen %d %s wearing %s' % (
+        rid, lvl, name, gen, race,
+        ', '.join(wearing) if wearing else 'nothing'))
 
     cur.execute('SELECT MAX(LENGTH(name)) FROM gear WHERE owner_id = ?',
                 (rid,))
@@ -168,8 +180,18 @@ def show_raider(db, rid):
         FROM gear WHERE owner_id = ? AND equipped''', (rid,))
     gear = {}
 
+    raw_stats = base_stats
+    for row in cur.fetchall():
+        gear[row[0]] = row[1:]
+        raw_stats = tuple(i + j for i, j in zip(raw_stats, row[1:]))
+    eff_stats = skew_stats(raw_stats)
+    der_stats = derive_stats(lvl, eff_stats)
+    total = sum(der_stats)
+
     hdr = ' '.join('%7s' % i for i in (
-        'str', 'int', 'dex', 'wis', 'chr', 'luck'))
+        'str', 'int', 'dex', 'wis', 'chr', 'luck',
+        'hp', 'mindamg', 'maxdamg', 'hitchan', 'hitfrst', 'critmul', 'melcrit',
+        'critrst', 'evade', 'melrst', 'total'))
     print('%-*s  %s' % (namelen, '', hdr))
     cur.execute('''SELECT name, slot,
         strength, intelligence, agility, wisdom, charm, luck
@@ -178,8 +200,17 @@ def show_raider(db, rid):
         name = row[0]
         slot = row[1]
         item_stats = row[2:]
+        slot_stats = gear.get(slot, (0, 0, 0, 0, 0, 0))
+        new_raw_stats = (i - j + k for i, j, k in
+                         zip(raw_stats, slot_stats, item_stats))
+        new_eff_stats = skew_stats(new_raw_stats)
+        new_der_stats = derive_stats(lvl, new_eff_stats)
+        new_total = sum(new_der_stats)
+        stats_diff = tuple(j - i for i, j in zip(
+            eff_stats + der_stats + (total,),
+            new_eff_stats + new_der_stats + (new_total,)))
         print('%-*s  %s' % (
-            namelen, name, ' '.join('%7d' % i for i in item_stats)))
+            namelen, name, ' '.join(fmt_stat_diff(i, 7) for i in stats_diff)))
 
 
 def fmt_stat_diff(stat, width):
