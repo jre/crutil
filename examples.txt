@@ -7,14 +7,17 @@ git pull
 Initial setup:
 ./setup.sh
 
-Build database from chain and cr guru:
+Create or update database:
 ./cr-import.py -g
 
 List raiders:
 ./cr-report.py
 
-Show raider gear:
+Show a raider's gear:
 ./cr-report.py -r <raider-id>
 
-After reloading the raiders page, update local database andreport best gear:
-./cr-import.py -r <raider-id>; ./cr-report.py -b -r <raider-id>
+After reloading the raiders page, update local database and report best gear:
+./cr-report.py -u -b -r <raider-id>
+
+If you want to see more gear combos, use -c with a count:
+./cr-report.py -b -r <raider-id> -c 10
