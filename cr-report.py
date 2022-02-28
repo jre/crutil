@@ -160,6 +160,9 @@ def show_raider(db, rid):
     cur.execute('SELECT MAX(LENGTH(name)) FROM gear WHERE owner_id = ?',
                 (rid,))
     namelen = cur.fetchone()[0]
+    if namelen is None:
+        print('Error: no gear found for [%d] %s' % (lvl, name))
+        return
     cur.execute('''SELECT slot,
         strength, intelligence, agility, wisdom, charm, luck
         FROM gear WHERE owner_id = ? AND equipped''', (rid,))

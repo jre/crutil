@@ -3,10 +3,11 @@ import appdirs
 import configparser
 import io
 import os
+import requests
 
 appname = 'crutil'
 
-slots = ('main_hand', 'dress', 'knickknack', 'finger')
+slots = ('main_hand', 'dress', 'knickknack', 'finger', 'background')
 
 
 class CRConf():
@@ -15,10 +16,10 @@ class CRConf():
         self._datadir = appdirs.user_data_dir(appname)
         self._conf_path = os.path.join(self._confdir, 'crutil.ini')
         self.db_path = os.path.join(self._datadir, 'raiders.sqlite')
-        self.auth_token_path = os.path.join(self._confdir,
-                                            'goog-auth-token.json')
         self.nft_contract = '0xfd12ec7ea4b381a79c78fe8b2248b4c559011ffb'
+        self.quest_contract = '0x5A4fCdD54D483808080e0588c1E7d73e2a8AfdA8'
         self.alchemy_api_url = 'https://polygon-mainnet.g.alchemy.com/v2'
+        self.polygonscan_api_url = 'https://api.polygonscan.com/api'
         self.crg_domain = 'europe-west3-cryptoraiders-guru.cloudfunctions.net'
         self.crg_url = 'https://www.cryptoraiders.guru'
 
@@ -26,21 +27,11 @@ class CRConf():
             'polygon': {
                 'alchemy_api_key': (
                     'Alchemy API Key', 'An API key for alchemy.com'),
+                'polygonscan_api_key': (
+                    'PolygonScan API Key', 'An API key for polygonscan.com'),
                 'nft_owner': (
                     'Wallet Address',
                     'The Polygon wallet address owning the raider NFTs'),
-            },
-            'google': {
-                'goog_client_id': (
-                    'Client ID', 'Client identifier for Google Sheets API'),
-                'goog_client_secret': (
-                    'Client secret', 'Client secret for Google Sheets API'),
-                'goog_sheet_id': (
-                    'Spreadsheet ID', 'Google Spreadsheet ID to import from'),
-                'goog_gear_tab': (
-                    'Gear sheet name', 'Name of gear tab in spreadsheet'),
-                'goog_raider_tab': (
-                    'Raider sheet name', 'Name of raiders tab in spreadsheet'),
             }
         }
         self._loaded = {i: {} for i in self._schema.keys()}
@@ -105,6 +96,25 @@ class CRConf():
                 if key in self._loaded[sect]:
                     md[sect][key]['value'] = self._loaded[sect][key]
         return md
+
+    def get_eth_abi(self, name, addr):
+        filename = os.path.join(self._confdir, name + '.json')
+        if os.path.exists(filename):
+            with open(filename) as fh:
+                return fh.read()
+        params = {
+            'module': 'contract',
+            'action': 'getabi',
+            'address': addr,
+            'apikey': self.polygonscan_api_key,
+        }
+        resp = requests.get(self.polygonscan_api_url, params=params)
+        data = resp.json()
+        if data['message'] == 'OK':
+            with open(filename, 'w') as fh:
+                fh.write(data['result'])
+            return data['result']
+        raise ValueError(data['result'])
 
 
 def main():

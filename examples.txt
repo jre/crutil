@@ -16,5 +16,5 @@ List raiders:
 Show raider gear:
 ./cr-report.py -r <raider-id>
 
-Pull spreadsheet data and report best gear:
-./cr-import-sheet.py; ./cr-report.py -b -r <raider-id>
+After reloading the raiders page, update local database andreport best gear:
+./cr-import.py -r <raider-id>; ./cr-report.py -b -r <raider-id>

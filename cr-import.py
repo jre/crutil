@@ -44,8 +44,8 @@ def setupdb(db, raiders=True, gear=True):
     db.commit()
 
 
-def get_raider_nfts():
-    print('querying polygon NFTs via alchemy')
+def get_owned_raider_nfts():
+    print('querying polygon owned NFTs via alchemy')
     r = requests.get('%s/%s/getNFTs/?owner=%s&contractAddresses[]=%s' % (
         cf.alchemy_api_url, cf.alchemy_api_key, cf.nft_owner, cf.nft_contract))
     data = r.json()
@@ -55,54 +55,81 @@ def get_raider_nfts():
             yield nft['id']['tokenId']
 
 
+def lookup_nft_raider_id(tokenid):
+    r = requests.get('%s/%s/getNFTMetadata/?contractAddress=%s&tokenId=%s' % (
+        cf.alchemy_api_url, cf.alchemy_api_key, cf.nft_contract, tokenid))
+    data = r.json()
+    # XXX fetch data['tokenUri']['gateway'] if metadata missing
+    return data['metadata']['id']
+
+
+def get_questing_raider_ids():
+    import web3
+    abi = cf.get_eth_abi('questing', cf.quest_contract)
+    print('querying questing raiders via alchemy eth_call')
+    w3 = web3.Web3(web3.Web3.HTTPProvider('%s/%s' % (
+        cf.alchemy_api_url, cf.alchemy_api_key)))
+    contract = w3.eth.contract(address=cf.quest_contract, abi=abi)
+    owner = web3.Web3.toChecksumAddress(cf.nft_owner)
+    return contract.functions.getOwnedRaiders(owner).call()
+
+
 def import_all_raiders(db):
+    def rlist(r):
+        return ' '.join(sorted(map(str, r)))
+    raiders = set(lookup_nft_raider_id(i) for i in get_owned_raider_nfts())
+    print('  found %d owned raiders: %s' % (len(raiders), rlist(raiders)))
+    questy = get_questing_raider_ids()
+    print('  found %d questing raiders: %s' % (len(questy), rlist(questy)))
+    raiders.update(questy)
+
     cur = db.cursor()
+    cur.execute('SELECT id FROM raiders')
+    skipped = set(i[0] for i in cur.fetchall()) - raiders
+    if len(skipped):
+        print('Warning: skipping %d raiders: %s' % (
+            len(skipped), rlist(skipped)))
+
     cur.execute('BEGIN TRANSACTION')
-    cur.execute('DELETE FROM raiders')
-    for token in get_raider_nfts():
-        import_raider_meta(cur, token)
+    ids = tuple(raiders)
+    for first in range(0, len(ids), 100):
+        import_raiders(cur, ids[first:first+100])
+    print('imported or updated %d raiders via CR API' % (len(ids),))
     db.commit()
 
 
 def import_one_raider(db, rid):
     cur = db.cursor()
     cur.execute('BEGIN TRANSACTION')
-    cur.execute('SELECT nft_token FROM raiders WHERE id = ?', (rid,))
-    token_id = cur.fetchone()[0]
-    cur.execute('DELETE FROM raiders WHERE id = ?', (rid,))
-    import_raider_meta(cur, token_id)
+    import_raiders(cur, (rid,))
+    print('imported or updated raider %d via CR API' % (rid,))
     db.commit()
 
 
-def import_raider_meta(cur, tokenid):
-    r = requests.get('%s/%s/getNFTMetadata/?contractAddress=%s&tokenId=%s' % (
-        cf.alchemy_api_url, cf.alchemy_api_key, cf.nft_contract, tokenid))
-    data = r.json()
-    # XXX fetch data['tokenUri']['gateway'] if metadata missing
-    print('queried polygon NFT %s for raider %-8d %s' % (
-        tokenid, data.get('metadata', {}).get('id'),
-        data.get('metadata', {}).get('name')))
-    params = {i['trait_type']: i['value']
-              for i in data['metadata']['attributes'] if 'value' in i}
-    params['id'] = data['metadata']['id']
-    params['nft'] = tokenid
-    params['image'] = data['metadata']['image']
-    params['name'] = data['metadata']['name'].split('] ', 1)[1]
-    cur.execute('''INSERT INTO raiders (
-        id, nft_token, name, image,
-        race, generation, birthday, experience, level,
-        strength, intelligence, agility, wisdom, charm, luck) VALUES (
-        :id, :nft, :name, :image,
-        :Race, :Generation, :Birthday, :Experience, :Level,
-        :Strength, :Intelligence, :Agility, :Wisdom, :Charm, :Luck)''', params)
+def import_raiders(cur, ids):
+    r = requests.get('https://api.cryptoraiders.xyz/raiders/',
+                     params={'ids[]': ids})
+    for data in r.json():
+        params = {i['trait_type']: i['value']
+                  for i in data['attributes'] if 'value' in i}
+        params['id'] = data['id']
+        params['image'] = data['image']
+        params['name'] = data['name'].split('] ', 1)[1]
+        cur.execute('''INSERT OR REPLACE INTO raiders (
+            id, name, image,
+            race, generation, birthday, experience, level,
+            strength, intelligence, agility, wisdom, charm, luck) VALUES (
+            :id, :name, :image,
+            :Race, :Generation, :Birthday, :Experience, :Level,
+            :Strength, :Intelligence, :Agility, :Wisdom, :Charm, :Luck)''',
+                    params)
 
 
-def import_raider_gear(db):
+def import_raider_gear(db, rid=None):
     source = 'crguru'
     cur = db.cursor()
     cur.execute('BEGIN TRANSACTION')
-    cur.execute('DELETE FROM gear WHERE source = ?', (source,))
-    print('querying cryptoraiders guru database')
+    print('querying guru database')
     crg_domain = 'europe-west3-cryptoraiders-guru.cloudfunctions.net'
     crg_url = 'https://%s/getRawDatas' % (crg_domain,)
     hdr = {'authority': crg_domain,
@@ -114,10 +141,14 @@ def import_raider_gear(db):
     r = requests.post(crg_url, headers=hdr,
                       json={'data': {'id': cf.nft_owner}})
     data = r.json()
-    print('last updated at %s' % (data['data']['updated_at'],))
     stats = ('strength', 'intelligence', 'agility', 'wisdom', 'charm', 'luck')
     for raider in data['data']['data']['raiders']:
-        print('  found gear for %(tokenId)d - [%(level)d] %(name)s' % raider)
+        if rid is not None and rid != raider['tokenId']:
+            continue
+        print('  found %d items for %d - [%d] %s from %s' % (
+            len(raider['inventory']), raider['tokenId'], raider['level'],
+            raider['name'], raider['updatedAt']))
+        cur.execute('DELETE FROM gear WHERE owner_id = :tokenId', raider)
         for inv in raider['inventory']:
             params = {'name': inv['item']['name'],
                       'slot': inv['item']['slot'],
@@ -130,8 +161,9 @@ def import_raider_gear(db):
             cur.execute('''INSERT INTO gear (
                 name, equipped, slot, owner_id, source,
                 strength, intelligence, agility, wisdom, charm, luck) VALUES (
-        :name, :equipped, :slot, :owner_id, :source,
-        :strength, :intelligence, :agility, :wisdom, :charm, :luck)''', params)
+                :name, :equipped, :slot, :owner_id, :source,
+                :strength, :intelligence, :agility, :wisdom, :charm, :luck)''',
+                        params)
     db.commit()
 
 
@@ -162,8 +194,11 @@ def main():
     cf.makedirs()
     db = sqlite3.connect(cf.db_path)
     setupdb(db)
+
     if args.raider is None:
         import_all_raiders(db)
+        if args.gear:
+            import_raider_gear(db)
     else:
         raider = findraider(db, args.raider)
         if raider is None:
@@ -171,8 +206,8 @@ def main():
             parser.print_usage()
             sys.exit(1)
         import_one_raider(db, raider)
-    if args.gear:
-        import_raider_gear(db)
+        if args.gear:
+            import_raider_gear(db, raider)
 
 
 if __name__ == '__main__':
