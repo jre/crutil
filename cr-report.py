@@ -138,6 +138,8 @@ def calc_best_gear(db, rid, count):
                                new_eff_stats, new_der_stats))
     combos.sort(key=lambda i: i[0], reverse=True)
 
+    print('%-*s  %s' % (namelen, '',
+                        ' '.join('%7d' % i for i in base_stats)))
     hdr = ' '.join('%7s' % i for i in (
         'str', 'int', 'dex', 'wis', 'chr', 'luck',
         'hp', 'mindamg', 'maxdamg', 'hitchan', 'hitfrst', 'critmul', 'melcrit',
