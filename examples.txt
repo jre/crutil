@@ -16,7 +16,8 @@ List raiders:
 Show a raider's gear:
 ./cr-report.py -r <raider-id>
 
-After reloading the raiders page, update local database and report best gear:
+Update local database and report best gear:
+note: you must reload the raiders page first!
 ./cr-report.py -u -b -r <raider-id>
 
 If you want to see more gear combos, use -c with a count:
