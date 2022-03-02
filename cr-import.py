@@ -64,13 +64,9 @@ def lookup_nft_raider_id(tokenid):
 
 
 def get_questing_raider_ids():
-    import web3
-    abi = cf.get_eth_abi('questing', cf.quest_contract)
+    contract = cf.get_eth_contract('questing-raiders')
     print('querying questing raiders via alchemy eth_call')
-    w3 = web3.Web3(web3.Web3.HTTPProvider('%s/%s' % (
-        cf.alchemy_api_url, cf.alchemy_api_key)))
-    contract = w3.eth.contract(address=cf.quest_contract, abi=abi)
-    owner = web3.Web3.toChecksumAddress(cf.nft_owner)
+    owner = cf.get_polygon_web3().toChecksumAddress(cf.nft_owner)
     return contract.functions.getOwnedRaiders(owner).call()
 
 

@@ -16,13 +16,21 @@ class CRConf():
         self._datadir = appdirs.user_data_dir(appname)
         self._conf_path = os.path.join(self._confdir, 'crutil.ini')
         self.db_path = os.path.join(self._datadir, 'raiders.sqlite')
+        # note: this is returned by recruiting contract method raidersAddress
         self.nft_contract = '0xfd12ec7ea4b381a79c78fe8b2248b4c559011ffb'
-        self.quest_contract = '0x5A4fCdD54D483808080e0588c1E7d73e2a8AfdA8'
+        self._contracts = {
+            'questing-raiders': '0x5A4fCdD54D483808080e0588c1E7d73e2a8AfdA8',
+            'grimweed-quest': '0xe193364370F0E2923b41a8d1850F442B45E5ccA7',
+            'grimweed': '0x06F34105B7DfedC95125348A8349BdA209928730',
+            'newt-quest': '0x98a195e3eC940f590D726557c95786C8EBb0A2D2',
+            'recruiting': '0x71AE763A52D26982373210922e3cE0415cB57F77',
+        }
         self.alchemy_api_url = 'https://polygon-mainnet.g.alchemy.com/v2'
         self.polygonscan_api_url = 'https://api.polygonscan.com/api'
         self.crg_domain = 'europe-west3-cryptoraiders-guru.cloudfunctions.net'
         self.crg_url = 'https://www.cryptoraiders.guru'
 
+        self._polygon_web3 = None
         self._schema = {
             'polygon': {
                 'alchemy_api_key': (
@@ -63,6 +71,7 @@ class CRConf():
     def write_secrets(self, filename, data):
         mode = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
         newfile = filename + '.new'
+        # XXX not safe for multiple instances
         fd = os.open(newfile, mode, 0o600)
         try:
             with os.fdopen(fd, 'w') as fh:
@@ -97,8 +106,9 @@ class CRConf():
                     md[sect][key]['value'] = self._loaded[sect][key]
         return md
 
-    def get_eth_abi(self, name, addr):
-        filename = os.path.join(self._confdir, name + '.json')
+    def _get_eth_abi(self, name):
+        addr = self._contracts[name]
+        filename = os.path.join(self._confdir, 'abi-%s.json' % (name,))
         if os.path.exists(filename):
             with open(filename) as fh:
                 return fh.read()
@@ -111,10 +121,24 @@ class CRConf():
         resp = requests.get(self.polygonscan_api_url, params=params)
         data = resp.json()
         if data['message'] == 'OK':
+            # XXX not safe for multiple instances
             with open(filename, 'w') as fh:
                 fh.write(data['result'])
             return data['result']
         raise ValueError(data['result'])
+
+    def get_polygon_web3(self):
+        if self._polygon_web3 is None:
+            import web3
+            self._polygon_web3 = web3.Web3(web3.Web3.HTTPProvider('%s/%s' % (
+                self.alchemy_api_url, self.alchemy_api_key)))
+        return self._polygon_web3
+
+    def get_eth_contract(self, name):
+        assert name in self._contracts
+        w3 = self.get_polygon_web3()
+        abi = self._get_eth_abi(name)
+        return w3.eth.contract(address=self._contracts[name], abi=abi)
 
 
 conf = CRConf()
