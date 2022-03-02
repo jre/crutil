@@ -142,8 +142,8 @@ def calc_best_gear(db, rid, count):
                         ' '.join('%7d' % i for i in base_stats)))
     hdr = ' '.join('%7s' % i for i in (
         'str', 'int', 'dex', 'wis', 'chr', 'luck',
-        'hp', 'mindamg', 'maxdamg', 'hitchan', 'hitfrst', 'critmul', 'melcrit',
-        'critrst', 'evade', 'melrst', 'total'))
+        'hp', 'mindamg', 'maxdamg', 'accurac', 'hitfrst', 'critdmg', 'critrat',
+        'critrst', 'evade', 'damgrst', 'total'))
     cur_stats_line = cur_eff_stats + cur_der_stats + (sum(cur_der_stats),)
     print('%-*s  %s' % (namelen, '', hdr))
     for (total, dname, dstats, wname, wstats, rname, rstats,
@@ -192,8 +192,8 @@ def show_raider(db, rid):
 
     hdr = ' '.join('%7s' % i for i in (
         'str', 'int', 'dex', 'wis', 'chr', 'luck',
-        'hp', 'mindamg', 'maxdamg', 'hitchan', 'hitfrst', 'critmul', 'melcrit',
-        'critrst', 'evade', 'melrst', 'total'))
+        'hp', 'mindamg', 'maxdamg', 'accurac', 'hitfrst', 'critdmg', 'critrat',
+        'critrst', 'evade', 'damgrst', 'total'))
     print('%-*s  %s' % (namelen, '', hdr))
     cur.execute('''SELECT name, slot,
         strength, intelligence, agility, wisdom, charm, luck
