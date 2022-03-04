@@ -87,17 +87,13 @@ def remove_dups(items):
 
 def calc_best_gear(db, rid, count):
     cur = db.cursor()
-    cur.execute('''SELECT name, level, generation, race,
+    cur.execute('''SELECT name, level,
         strength, intelligence, agility, wisdom, charm, luck
         FROM raiders WHERE id = ?''', (rid,))
     row = cur.fetchone()
-    name, lvl, gen, race = row[:4]
-    base_stats = row[4:]
-    wearing = get_equipped(cur, rid)
-    lvl_name = '[%d] %s' % (lvl, name)
-    print('%d  %s  - gen %d %s wearing %s' % (
-        rid, lvl_name, gen, race,
-        ', '.join(wearing) if wearing else 'nothing'))
+    name, lvl = row[:2]
+    id_lvl_name = '%d - [%d] %s' % (rid, lvl, name)
+    base_stats = row[2:]
 
     cur.execute('SELECT MAX(LENGTH(name)) FROM gear WHERE owner_id = ?',
                 (rid,))
@@ -106,16 +102,18 @@ def calc_best_gear(db, rid, count):
         print('Error: no gear found for [%d] %s' % (lvl, name))
         return
 
-    cur.execute('''SELECT name, slot,
+    cur.execute('''SELECT slot, name,
         strength, intelligence, agility, wisdom, charm, luck
         FROM gear WHERE owner_id = ? AND equipped''', (rid,))
     raw_stats = base_stats
-    equipped = {i: ('nothing', (0,) * 6) for i in cr_conf.slots}
+    equipped = {i: ('nothing (%s)' % i, 0, 0, 0, 0, 0, 0)
+                for i in cr_conf.slots}
     for row in cur.fetchall():
-        name, slot = row[:2]
-        item_stats = row[2:]
-        equipped[slot] = (name, item_stats)
-        raw_stats = tuple(i + j for i, j in zip(raw_stats, item_stats))
+        slot = row[0]
+        name_stats = row[1:]
+        stats = row[2:]
+        equipped[slot] = name_stats
+        raw_stats = tuple(i + j for i, j in zip(raw_stats, stats))
     cur_eff_stats = skew_stats(raw_stats)
     cur_der_stats = derive_stats(lvl, cur_eff_stats)
 
@@ -129,49 +127,56 @@ def calc_best_gear(db, rid, count):
             gear[slot].append(('nothing (%s)' % (slot,), 0, 0, 0, 0, 0, 0))
 
     combos = []
+    new = {'': ('',) + base_stats}
     for weap_row in gear['main_hand']:
-        weap_name = weap_row[0]
-        weap_stats = weap_row[1:]
+        new['main_hand'] = weap_row
         for dress_row in gear['dress']:
-            dress_name = dress_row[0]
-            dress_stats = dress_row[1:]
+            new['dress'] = dress_row
             for ring_row in gear['finger']:
-                ring_name = ring_row[0]
-                ring_stats = ring_row[1:]
-                new_eff_stats = skew_stats(
-                    i + j + k + l for i, j, k, l in
-                    zip(base_stats, weap_stats, dress_stats, ring_stats))
+                new['finger'] = ring_row
+                no_more_magic = tuple(zip(*new.values()))
+                raw_stats = tuple(sum(i) for i in no_more_magic[1:])
+                new_eff_stats = skew_stats(raw_stats)
                 new_der_stats = derive_stats(lvl, new_eff_stats)
-                combos.append((sum(new_der_stats), dress_name, dress_stats,
-                               weap_name, weap_stats, ring_name, ring_stats,
+                combos.append((sum(new_der_stats), new.copy(),
                                new_eff_stats, new_der_stats))
     combos.sort(key=lambda i: i[0], reverse=True)
 
     def fmtstats(s):
         return ' '.join('%7d' % i for i in s)
 
-    hdr = ' '.join('%7s' % i for i in (
+    print('%-*s  %s' % (namelen, '', fmt_hdr((
         'str', 'int', 'dex', 'wis', 'chr', 'luck',
         'hp', 'mindamg', 'maxdamg', 'accurac', 'hitfrst', 'critdmg', 'critrat',
-        'critrst', 'evade', 'damgrst', 'total'))
+        'critrst', 'evade', 'damgrst', 'total'), 7)))
     cur_stats_line = cur_eff_stats + cur_der_stats + (sum(cur_der_stats),)
-    print('%-*s  %s' % (namelen, '', hdr))
-    print(fmt_stats_base(('%-*s  %s\n' * 5) % (
-        namelen, lvl_name, fmtstats(base_stats),
-        namelen, equipped['main_hand'][0], fmtstats(equipped['main_hand'][1]),
-        namelen, equipped['dress'][0], fmtstats(equipped['dress'][1]),
-        namelen, equipped['finger'][0], fmtstats(equipped['finger'][1]),
-        namelen, '', fmtstats(cur_stats_line))))
-    for (total, dname, dstats, wname, wstats, rname, rstats,
-         efstats, derstats) in combos[:count]:
+    print(fmt_base('%-*s  %s\n' * 5) % (
+        namelen, id_lvl_name, fmtstats(base_stats),
+        namelen, equipped['main_hand'][0], fmtstats(equipped['main_hand'][1:]),
+        namelen, equipped['dress'][0], fmtstats(equipped['dress'][1:]),
+        namelen, equipped['finger'][0], fmtstats(equipped['finger'][1:]),
+        namelen, '', fmtstats(cur_stats_line)))
+    for (total, new, efstats, derstats) in combos[:count]:
         statsline = efstats + derstats + (total,)
         stats_diff = tuple(j - i for i, j in zip(cur_stats_line, statsline))
-        print(('%-*s  %s\n' * 5) % (
-            namelen, wname, fmtstats(wstats),
-            namelen, dname, fmtstats(dstats),
-            namelen, rname, fmtstats(rstats),
-            namelen, '', fmtstats(statsline),
-            namelen, '', ' '.join(fmt_stat_diff(i, 7) for i in stats_diff)))
+        print(equipped)
+        print(new)
+        cur_equipment = True
+        for slot in ('main_hand', 'dress', 'finger'):
+            stats = '%-*s  %s' % (
+                namelen, new[slot][0], fmtstats(new[slot][1:]))
+            if equipped[slot] == new[slot]:
+                print(fmt_base(stats))
+            else:
+                cur_equipment = False
+                print(stats)
+        if cur_equipment:
+            print('%-*s  %s\n' % (namelen, '', fmt_base(fmtstats(statsline))))
+        else:
+            print('%-*s  %s\n%-*s  %s\n' % (
+                namelen, '', fmtstats(statsline),
+                namelen, '', ' '.join(fmt_stat_diff(i, 7)
+                                      for i in stats_diff)))
 
 
 def show_raider(db, rid):
@@ -241,8 +246,12 @@ def fmt_stat_diff(stat, width):
     return '\033[0;%dm%s\033[0m' % (color, '%+*.2f' % (width, stat))
 
 
-def fmt_stats_base(string):
-    return '\033[0;1m%s\033[0m' % (string,)
+def fmt_hdr(names, width):
+    return '\033[0;1m%s\033[0m' % ' '.join('%*s' % (width, i) for i in names)
+
+
+def fmt_base(text):
+    return '\033[0;1m%s\033[0m' % (text,)
 
 
 def findraider(db, ident):
