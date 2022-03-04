@@ -101,6 +101,9 @@ def calc_best_gear(db, rid, count):
     cur.execute('SELECT MAX(LENGTH(name)) FROM gear WHERE owner_id = ?',
                 (rid,))
     namelen = cur.fetchone()[0]
+    if namelen is None:
+        print('Error: no gear found for [%d] %s' % (lvl, name))
+        return
 
     cur.execute('''SELECT strength, intelligence, agility, wisdom, charm, luck
         FROM gear WHERE owner_id = ? AND equipped''', (rid,))
@@ -197,7 +200,7 @@ def show_raider(db, rid):
     print('%-*s  %s' % (namelen, '', hdr))
     cur.execute('''SELECT name, slot,
         strength, intelligence, agility, wisdom, charm, luck
-        FROM gear WHERE owner_id = ?''', (rid,))
+        FROM gear WHERE owner_id = ? ORDER BY name''', (rid,))
     for row in cur.fetchall():
         name = row[0]
         slot = row[1]
