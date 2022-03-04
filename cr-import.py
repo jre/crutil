@@ -8,39 +8,37 @@ cr_conf = __import__('cr-conf')
 cf = cr_conf.conf
 
 
-def setupdb(db, raiders=True, gear=True):
+def setupdb(db):
     cur = db.cursor()
-    if raiders:
-        cur.execute('''CREATE TABLE IF NOT EXISTS raiders(
-            id INTEGER PRIMARY KEY,
-            nft_token VARCHAR(255),
-            name VARCHAR(255),
-            image TEXT,
-            race VARCHAR(255),
-            generation INTEGER,
-            birthday INTEGER,
-            experience INTEGER,
-            level INTEGER,
-            strength INTEGER,
-            intelligence INTEGER,
-            agility INTEGER,
-            wisdom INTEGER,
-            charm INTEGER,
-            luck INTEGER)''')
-    if gear:
-        cur.execute('''CREATE TABLE IF NOT EXISTS gear(
-            name VARCHAR(255),
-            equipped INTEGER,
-            slot VARCHAR(255),
-            strength INTEGER,
-            intelligence INTEGER,
-            agility INTEGER,
-            wisdom INTEGER,
-            charm INTEGER,
-            luck INTEGER,
-            owner_id INTEGER,
-            source VARCHAR(255),
-            FOREIGN KEY(owner_id) REFERENCES raiders(id))''')
+    cur.execute('''CREATE TABLE IF NOT EXISTS raiders(
+        id INTEGER PRIMARY KEY,
+        nft_token VARCHAR(255),
+        name VARCHAR(255),
+        image TEXT,
+        race VARCHAR(255),
+        generation INTEGER,
+        birthday INTEGER,
+        experience INTEGER,
+        level INTEGER,
+        strength INTEGER,
+        intelligence INTEGER,
+        agility INTEGER,
+        wisdom INTEGER,
+        charm INTEGER,
+        luck INTEGER)''')
+    cur.execute('''CREATE TABLE IF NOT EXISTS gear(
+        name VARCHAR(255),
+        equipped INTEGER,
+        slot VARCHAR(255),
+        strength INTEGER,
+        intelligence INTEGER,
+        agility INTEGER,
+        wisdom INTEGER,
+        charm INTEGER,
+        luck INTEGER,
+        owner_id INTEGER,
+        source VARCHAR(255),
+        FOREIGN KEY(owner_id) REFERENCES raiders(id))''')
     db.commit()
 
 
