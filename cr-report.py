@@ -94,8 +94,9 @@ def calc_best_gear(db, rid, count):
     name, lvl, gen, race = row[:4]
     base_stats = row[4:]
     wearing = get_equipped(cur, rid)
-    print('%d  [%d] %s  - gen %d %s wearing %s' % (
-        rid, lvl, name, gen, race,
+    lvl_name = '[%d] %s' % (lvl, name)
+    print('%d  %s  - gen %d %s wearing %s' % (
+        rid, lvl_name, gen, race,
         ', '.join(wearing) if wearing else 'nothing'))
 
     cur.execute('SELECT MAX(LENGTH(name)) FROM gear WHERE owner_id = ?',
@@ -105,11 +106,16 @@ def calc_best_gear(db, rid, count):
         print('Error: no gear found for [%d] %s' % (lvl, name))
         return
 
-    cur.execute('''SELECT strength, intelligence, agility, wisdom, charm, luck
+    cur.execute('''SELECT name, slot,
+        strength, intelligence, agility, wisdom, charm, luck
         FROM gear WHERE owner_id = ? AND equipped''', (rid,))
     raw_stats = base_stats
+    equipped = {i: ('nothing', (0,) * 6) for i in cr_conf.slots}
     for row in cur.fetchall():
-        raw_stats = tuple(i + j for i, j in zip(raw_stats, row))
+        name, slot = row[:2]
+        item_stats = row[2:]
+        equipped[slot] = (name, item_stats)
+        raw_stats = tuple(i + j for i, j in zip(raw_stats, item_stats))
     cur_eff_stats = skew_stats(raw_stats)
     cur_der_stats = derive_stats(lvl, cur_eff_stats)
 
@@ -141,23 +147,30 @@ def calc_best_gear(db, rid, count):
                                new_eff_stats, new_der_stats))
     combos.sort(key=lambda i: i[0], reverse=True)
 
-    print('%-*s  %s' % (namelen, '',
-                        ' '.join('%7d' % i for i in base_stats)))
+    def fmtstats(s):
+        return ' '.join('%7d' % i for i in s)
+
     hdr = ' '.join('%7s' % i for i in (
         'str', 'int', 'dex', 'wis', 'chr', 'luck',
         'hp', 'mindamg', 'maxdamg', 'accurac', 'hitfrst', 'critdmg', 'critrat',
         'critrst', 'evade', 'damgrst', 'total'))
     cur_stats_line = cur_eff_stats + cur_der_stats + (sum(cur_der_stats),)
     print('%-*s  %s' % (namelen, '', hdr))
+    print(fmt_stats_base(('%-*s  %s\n' * 5) % (
+        namelen, lvl_name, fmtstats(base_stats),
+        namelen, equipped['main_hand'][0], fmtstats(equipped['main_hand'][1]),
+        namelen, equipped['dress'][0], fmtstats(equipped['dress'][1]),
+        namelen, equipped['finger'][0], fmtstats(equipped['finger'][1]),
+        namelen, '', fmtstats(cur_stats_line))))
     for (total, dname, dstats, wname, wstats, rname, rstats,
          efstats, derstats) in combos[:count]:
         statsline = efstats + derstats + (total,)
         stats_diff = tuple(j - i for i, j in zip(cur_stats_line, statsline))
-        print('%-*s  %s\n%-*s  %s\n%-*s  %s\n%-*s  %s\n%-*s  %s\n' % (
-            namelen, wname, ' '.join('%7d' % i for i in wstats),
-            namelen, dname, ' '.join('%7d' % i for i in dstats),
-            namelen, rname, ' '.join('%7d' % i for i in rstats),
-            namelen, '', ' '.join('%7d' % i for i in statsline),
+        print(('%-*s  %s\n' * 5) % (
+            namelen, wname, fmtstats(wstats),
+            namelen, dname, fmtstats(dstats),
+            namelen, rname, fmtstats(rstats),
+            namelen, '', fmtstats(statsline),
             namelen, '', ' '.join(fmt_stat_diff(i, 7) for i in stats_diff)))
 
 
@@ -226,6 +239,10 @@ def fmt_stat_diff(stat, width):
     else:
         return '%*.1f' % (width, stat)
     return '\033[0;%dm%s\033[0m' % (color, '%+*.2f' % (width, stat))
+
+
+def fmt_stats_base(string):
+    return '\033[0;1m%s\033[0m' % (string,)
 
 
 def findraider(db, ident):
