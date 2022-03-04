@@ -159,8 +159,6 @@ def calc_best_gear(db, rid, count):
     for (total, new, efstats, derstats) in combos[:count]:
         statsline = efstats + derstats + (total,)
         stats_diff = tuple(j - i for i, j in zip(cur_stats_line, statsline))
-        print(equipped)
-        print(new)
         cur_equipment = True
         for slot in ('main_hand', 'dress', 'finger'):
             stats = '%-*s  %s' % (
