@@ -481,7 +481,7 @@ def main():
         sys.exit(1)
 
     if args.update:
-        __import__('cr-import').import_or_update(db, raider=raider)
+        __import__('cr-update').import_or_update(db, raider=raider)
 
     if args.cmd == 'gear':
         show_raider(db, raider)

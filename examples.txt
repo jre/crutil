@@ -8,7 +8,7 @@ Initial setup:
 ./setup.sh
 
 Create or update database:
-./cr-import.py
+./cr-update.py
 
 List all raiders:
 ./cr-report.py list
