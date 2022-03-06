@@ -3,6 +3,9 @@ import sqlite3
 import argparse
 import math
 import sys
+import datetime
+import operator
+import functools
 
 cr_conf = __import__('cr-conf')
 cf = cr_conf.conf
@@ -46,19 +49,185 @@ def derive_stats(level, base):
     return (maxhp, mindam, maxdam, hitc, hitf, cdm, mc, cr, ec, mr)
 
 
-def show_all_raiders(db):
+def multisub(val, indexes):
+    for i in indexes:
+        val = val[i]
+    return val
+
+
+def make_sort_keyfunc(spec, columns):
+    col_idx = {}
+    for idx, col in enumerate(columns):
+        if isinstance(col, tuple):
+            col_idx.update({k: (idx, i) for i, k in enumerate(col)})
+        else:
+            col_idx[col] = (idx,)
+    try:
+        query = tuple((col_idx[i.lstrip('-')],
+                       (operator.lt, operator.gt)[int(i[0] == '-')])
+                      for i in (j.lower().strip() for j in spec)
+                      if len(i.lstrip('-')))
+    except KeyError as err:
+        raise ValueError('unknown column %r, valid columns: %s' % (
+            err.args[0], ' '.join(sorted(col_idx.keys()))))
+
+    def compare(a, b):
+        for idx, ltfn in query:
+            aa = multisub(a, idx)
+            bb = multisub(b, idx)
+            if aa != bb:
+                return (1, -1)[int(ltfn(aa, bb))]
+        return 0
+
+    return functools.cmp_to_key(compare)
+
+
+def last_daily_refresh(now):
+    day_delta = datetime.timedelta(days=1)
+    target = datetime.datetime(now.year, now.month, now.day,
+                               *cf.cr_newraid_time)
+    target += day_delta
+    while target > now:
+        target -= day_delta
+    return target
+
+
+def last_weekly_refresh(now):
+    today = datetime.date.fromtimestamp(now.timestamp())
+    if today.weekday() > cf.cr_newraid_weekday:
+        future_wed_delta = 7 - (today.weekday() - cf.cr_newraid_weekday)
+    else:
+        future_wed_delta = 7 + (cf.cr_newraid_weekday - today.weekday())
+    wed = today + datetime.timedelta(days=future_wed_delta)
+    target = datetime.datetime(wed.year, wed.month, wed.day,
+                               *cf.cr_newraid_time)
+    week_delta = datetime.timedelta(days=7)
+    while target > now:
+        target -= week_delta
+    return target
+
+
+def get_raider_raids(cur, rid, last_daily, last_weekly):
+    cur.execute('''SELECT remaining, last_raid, last_endless
+        FROM raids WHERE raider = ?''', (rid,))
+    rows = tuple(cur.fetchall())
+    if len(rows) == 0:
+        return -1, -1
+    raids_left, last_raid, last_endless = rows[0]
+    if last_raid < last_daily.timestamp():
+        raids_left = cf.cr_weekly_raids
+    endless_left = int(last_endless < last_daily.timestamp())
+    return raids_left, endless_left
+
+
+def get_raider_recruiting(cur, rid, now):
+    cur.execute('SELECT next, cost FROM recruiting WHERE raider = ?', (rid,))
+    rows = tuple(cur.fetchall())
+    if len(rows) == 0:
+        return -1, -1
+    next, cost = rows[0]
+    if next and next > now.timestamp():
+        return int(next - now.timestamp()), cost
+    else:
+        return 0, cost
+
+
+def get_raider_questing(cur, rid, now):
+    cur.execute('''SELECT status, started_on, return_divisor, returns_on
+        FROM quests WHERE raider = ?''', (rid,))
+    rows = tuple(cur.fetchall())
+    if len(rows) == 0:
+        return '?', -1
+    status, started_on, return_div, returns_on = rows[0]
+    is_returning = cf.quest_returning[status]
+    now_secs = now.timestamp()
+
+    if is_returning is None:
+        status_str = 'no'
+        back_secs = 0
+    elif not is_returning:
+        status_str = 'yes'
+        back_secs = int((now_secs - started_on) / return_div)
+    elif is_returning:
+        if returns_on and returns_on > now_secs:
+            status_str = 'returning'
+            back_secs = int(returns_on - now_secs)
+        else:
+            status_str = 'back'
+            back_secs = 0
+    return status_str, back_secs
+
+
+def fmt_raider_timedelta(delta):
+    if delta < 0:
+        return '?'
+    elif delta == 0:
+        return 'now'
+    parts = str(datetime.timedelta(seconds=delta)).split(',')
+    return ', '.join(tuple(parts[:-1]) + ('%8s' % (parts[-1].strip(),),))
+
+
+def fmt_positive_count(count):
+    return '?' if count < 0 else str(count)
+
+
+def fmt_positive_secs(secs):
+    return 'now' if secs == 0 else str(datetime.datetime.fromtimestamp(secs))
+
+
+def show_all_raiders(db, sorting=()):
     cur = db.cursor()
     cur.execute('SELECT MAX(LENGTH(id)), MAX(LENGTH(name)) FROM raiders')
     idlen, namelen = cur.fetchone()
 
-    cur.execute('''SELECT id, name, level, generation, race
-        FROM raiders ORDER BY level DESC, id''')
-    raiders = list(cur.fetchall())
-    for id, name, lvl, gen, race in raiders:
-        wearing = get_equipped(cur, id)
-        print('%-*d  [%d] %-#*s - gen %d %s wearing %s' % (
-            idlen, id, lvl, namelen, name, gen, race,
-            ', '.join(wearing) if wearing else 'nothing'))
+    cur.execute('SELECT id, name, level, generation, race FROM raiders')
+    rows = tuple(cur.fetchall())
+
+    if not sorting:
+        sorting = ('-level', 'id')
+
+    now = datetime.datetime.utcnow()
+    last_daily = last_daily_refresh(now)
+    last_weekly = last_weekly_refresh(now)
+    cols = (('id', str, '%*s'),
+            (('level', 'name'), lambda v: '[%d] %s' % v, '%-*s'),
+            ('gen', str, '%*s'),
+            ('race', str, '%-*s'),
+            ('raids', fmt_positive_count, '%*s'),
+            ('endless', fmt_positive_count, '%*s'),
+            ('recruit', fmt_raider_timedelta, '%*s'),
+            ('cost', str, '%*s'),
+            ('quest', str, '%-*s'),
+            ('returns', fmt_raider_timedelta, '%*s'),
+            ('wearing', str, '%-*s'))
+    widths = [0 for _ in cols]
+    col_labels = {cols[1][0]: lambda c: c[1]}
+    print_hdr = tuple(col_labels.get(c[0], lambda i: i)(c[0]) for c in cols)
+    sortkey = make_sort_keyfunc(sorting, (i[0] for i in cols))
+    raw_tbl = []
+    for id, name, lvl, gen, race in rows:
+        raids, endless = get_raider_raids(cur, id, last_daily, last_weekly)
+        recruit_time, recruit_cost = get_raider_recruiting(cur, id, now)
+        quest_status, quest_back = get_raider_questing(cur, id, now)
+        wear_seq = get_equipped(cur, id)
+        wear_str = (', '.join(wear_seq) if wear_seq else 'nothing')
+        raw_tbl.append((id, (lvl, name), gen, race, raids, endless,
+                        recruit_time, recruit_cost,
+                        quest_status, quest_back, wear_str))
+    raw_tbl.sort(key=sortkey)
+
+    widths = [len(i) for i in print_hdr]
+    final_tbl = [print_hdr]
+    for row in raw_tbl:
+        vals = tuple(cols[i][1](row[i]) for i in range(len(cols)))
+        for i in range(len(cols)):
+            if len(vals[i]) > widths[i]:
+                widths[i] = len(vals[i])
+        final_tbl.append(vals)
+
+    for row in final_tbl:
+        print(' '.join(cols[i][2] % (widths[i], row[i])
+                       for i in range(len(cols))))
 
 
 def get_equipped(cur, rid):
@@ -266,16 +435,32 @@ def findraider(db, ident):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-r', dest='raider',
-                        help='Raider name or id')
-    parser.add_argument('-u', dest='update',
+    parser.set_defaults(cmd='list', sort='')
+    subparsers = parser.add_subparsers(dest='cmd')
+
+    p_best = subparsers.add_parser('best',
+                                   help='Calculate best gear for raider')
+    p_best.add_argument('raider', help='Raider name or id')
+    p_best.add_argument('-u', dest='update',
                         default=False, action='store_true',
                         help='Update raider data first')
-    parser.add_argument('-b', dest='best',
+    p_best.add_argument('-c', dest='count', type=int, default=5,
+                        help='Number of combinations to display')
+    # XXX add -s option for best
+
+    p_gear = subparsers.add_parser('gear',
+                                   help="Show a raider's gear")
+    p_gear.add_argument('raider', help='Raider name or id')
+    p_gear.add_argument('-u', dest='update',
                         default=False, action='store_true',
-                        help='Calculate best gear for raider')
-    parser.add_argument('-c', dest='count', type=int, default=5,
-                        help='Number of combos to display with -d')
+                        help='Update raider data first')
+    # XXX add -s option for gear
+
+    p_list = subparsers.add_parser('list',
+                                   help='List all raiders')
+    p_list.add_argument('-s', dest='sort', default='',
+                        help='Sort order')
+
     args = parser.parse_args()
 
     if not cf.load_config():
@@ -283,27 +468,25 @@ def main():
         sys.exit(1)
     db = sqlite3.connect(cf.db_path)
 
-    raider = None
-    if args.raider is not None:
-        raider = findraider(db, args.raider)
-        if raider is None:
-            print('No raider named "%s" found' % (args.raider,))
-            parser.print_usage()
-            sys.exit(1)
+    sorting = tuple(i.strip().lower() for i in args.sort.split(',') if i)
+
+    if args.cmd is None or args.cmd == 'list':
+        show_all_raiders(db, sorting=sorting)
+        return
+
+    raider = findraider(db, args.raider)
+    if raider is None:
+        print('No raider named "%s" found' % (args.raider,))
+        parser.print_usage()
+        sys.exit(1)
 
     if args.update:
-        __import__('cr-import').import_or_update(db, raider=raider, gear=True)
+        __import__('cr-import').import_or_update(db, raider=raider)
 
-    if args.best:
-        if raider is None:
-            print('Raider is required, please specify with -r')
-            parser.print_usage()
-            sys.exit(1)
-        calc_best_gear(db, raider, args.count)
-    elif raider is not None:
+    if args.cmd == 'gear':
         show_raider(db, raider)
-    else:
-        show_all_raiders(db)
+    elif args.cmd == 'best':
+        calc_best_gear(db, raider, args.count)
 
 
 if __name__ == '__main__':

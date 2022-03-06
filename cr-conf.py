@@ -4,6 +4,7 @@ import configparser
 import io
 import os
 import requests
+import datetime
 
 appname = 'crutil'
 
@@ -15,20 +16,38 @@ class CRConf():
         self._confdir = appdirs.user_config_dir(appname)
         self._datadir = appdirs.user_data_dir(appname)
         self._conf_path = os.path.join(self._confdir, 'crutil.ini')
+        self._abidir = os.path.join(self._datadir, 'abi')
         self.db_path = os.path.join(self._datadir, 'raiders.sqlite')
         # note: this is returned by recruiting contract method raidersAddress
         self.nft_contract = '0xfd12ec7ea4b381a79c78fe8b2248b4c559011ffb'
-        self._contracts = {
-            'questing-raiders': '0x5A4fCdD54D483808080e0588c1E7d73e2a8AfdA8',
-            'grimweed-quest': '0xe193364370F0E2923b41a8d1850F442B45E5ccA7',
-            'grimweed': '0x06F34105B7DfedC95125348A8349BdA209928730',
-            'newt-quest': '0x98a195e3eC940f590D726557c95786C8EBb0A2D2',
-            'recruiting': '0x71AE763A52D26982373210922e3cE0415cB57F77',
-        }
+        # note: mounts nft is 0x7f2e8b6c55fcc5c52df495065d2147b9eab2cc54
+        self.quest_returning = (None, False, True)
         self.alchemy_api_url = 'https://polygon-mainnet.g.alchemy.com/v2'
         self.polygonscan_api_url = 'https://api.polygonscan.com/api'
         self.crg_domain = 'europe-west3-cryptoraiders-guru.cloudfunctions.net'
         self.crg_url = 'https://www.cryptoraiders.guru'
+        # raids refresh on wednesday, 6am UTC
+        self.cr_newraid_weekday = 2
+        self.cr_newraid_time = (6, 0, 0)
+        self.cr_weekly_raids = 5
+
+        # known verified contracts, which we can retrieve the ABI for
+        self._contract_names = {
+            '0x06F34105B7DfedC95125348A8349BdA209928730': 'grimweed',
+            '0x98a195e3eC940f590D726557c95786C8EBb0A2D2': 'newt-quest',
+            '0x5A4fCdD54D483808080e0588c1E7d73e2a8AfdA8': 'questing-raiders',
+            '0x5b0e5ae346a919c39fc8553b94d67599fd5e591d': 'raider-info',
+            '0x71AE763A52D26982373210922e3cE0415cB57F77': 'recruiting',
+            '0xe193364370F0E2923b41a8d1850F442B45E5ccA7': 'grimweed-quest',
+            '0xF001508171344A4bc90fdA37890e343749d5D216': 'recruiting-history',
+        }
+        self._contracts = {v: k for k, v in self._contract_names.items()}
+        self._quest_names = {
+            'grimweed-quest': 'The Hunt for Grimweed',
+            'newt-quest': 'Newt Slayer',
+        }
+        self._quests = {self._contracts[k]: v
+                        for k, v in self._quest_names.items()}
 
         self._polygon_web3 = None
         self._schema = {
@@ -47,6 +66,8 @@ class CRConf():
     def makedirs(self):
         if not os.path.exists(self._confdir):
             os.makedirs(self._confdir)
+        if not os.path.exists(self._abidir):
+            os.makedirs(self._abidir)
         if not os.path.exists(self._datadir):
             os.makedirs(self._datadir)
 
@@ -108,7 +129,7 @@ class CRConf():
 
     def _get_eth_abi(self, name):
         addr = self._contracts[name]
-        filename = os.path.join(self._confdir, 'abi-%s.json' % (name,))
+        filename = os.path.join(self._abidir, addr + '.json')
         if os.path.exists(filename):
             with open(filename) as fh:
                 return fh.read()
@@ -134,7 +155,12 @@ class CRConf():
                 self.alchemy_api_url, self.alchemy_api_key)))
         return self._polygon_web3
 
-    def get_eth_contract(self, name):
+    def get_eth_contract(self, name=None, address=None):
+        assert (name is None) != (address is None)
+        if name is None:
+            if address not in self._contract_names:
+                raise ValueError('unknown contract address: %s' % (address,))
+            name = self._contract_names[address]
         assert name in self._contracts
         w3 = self.get_polygon_web3()
         abi = self._get_eth_abi(name)

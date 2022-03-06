@@ -8,17 +8,23 @@ Initial setup:
 ./setup.sh
 
 Create or update database:
-./cr-import.py -g
+./cr-import.py
 
-List raiders:
-./cr-report.py
+List all raiders:
+./cr-report.py list
+
+List all raiders sorted by next recruitment date:
+./cr-report.py list -s recruit
+
+Sort by a list of columns, prefixing with - for reverse sort:
+./cr-report.py list -s raids,endless,-level
 
 Show a raider's gear:
-./cr-report.py -r <raider-id>
+./cr-report.py gear <raider-id>
 
 Update local database and report best gear:
 note: you must reload the raiders page first!
-./cr-report.py -u -b -r <raider-id>
+./cr-report.py best <raider-id> -u
 
 If you want to see more gear combos, use -c with a count:
-./cr-report.py -b -r <raider-id> -c 10
+./cr-report.py best <raider-id> -c 10

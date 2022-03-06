@@ -3,6 +3,8 @@ import requests
 import sqlite3
 import argparse
 import sys
+import time
+import datetime
 
 cr_conf = __import__('cr-conf')
 cf = cr_conf.conf
@@ -10,6 +12,7 @@ cf = cr_conf.conf
 
 def setupdb(db):
     cur = db.cursor()
+
     cur.execute('''CREATE TABLE IF NOT EXISTS raiders(
         id INTEGER PRIMARY KEY,
         nft_token VARCHAR(255),
@@ -26,6 +29,7 @@ def setupdb(db):
         wisdom INTEGER,
         charm INTEGER,
         luck INTEGER)''')
+
     cur.execute('''CREATE TABLE IF NOT EXISTS gear(
         name VARCHAR(255),
         equipped INTEGER,
@@ -39,6 +43,29 @@ def setupdb(db):
         owner_id INTEGER,
         source VARCHAR(255),
         FOREIGN KEY(owner_id) REFERENCES raiders(id))''')
+
+    cur.execute('''CREATE TABLE IF NOT EXISTS raids(
+        raider INTEGER PRIMARY KEY,
+        remaining INTEGER,
+        last_raid INTEGER,
+        last_endless INTEGER,
+        FOREIGN KEY(raider) REFERENCES raiders(id))''')
+
+    cur.execute('''CREATE TABLE IF NOT EXISTS recruiting(
+        raider INTEGER PRIMARY KEY,
+        next INTEGER,
+        cost INTEGER,
+        FOREIGN KEY(raider) REFERENCES raiders(id))''')
+
+    cur.execute('''CREATE TABLE IF NOT EXISTS quests(
+        raider INTEGER PRIMARY KEY,
+        status INTEGER,
+        contract VARCHAR(255),
+        started_on INTEGER,
+        return_divisor INTEGER,
+        returns_on INTEGER,
+        FOREIGN KEY(raider) REFERENCES raiders(id))''')
+
     db.commit()
 
 
@@ -81,15 +108,18 @@ def import_all_raiders(db):
     cur.execute('SELECT id FROM raiders')
     skipped = set(i[0] for i in cur.fetchall()) - raiders
     if len(skipped):
-        print('Warning: skipping %d raiders: %s' % (
+        # XXX can the owner method show if we have sold the raider
+        # or maybe raiderInfo.raidersOwnedBy
+        print('Warning: skipping %d unknown raiders: %s' % (
             len(skipped), rlist(skipped)))
 
     cur.execute('BEGIN TRANSACTION')
-    ids = tuple(raiders)
+    ids = tuple(sorted(raiders))
     for first in range(0, len(ids), 100):
         import_raiders(cur, ids[first:first+100])
     print('imported or updated %d raiders via CR API' % (len(ids),))
     db.commit()
+    return ids
 
 
 def import_one_raider(db, rid):
@@ -119,11 +149,18 @@ def import_raiders(cur, ids):
                     params)
 
 
+def iso_datetime_to_secs(isotime):
+    dt = datetime.datetime.fromisoformat(isotime.rstrip('Z'))
+    return int(dt.timestamp())
+
+
 def import_raider_gear(db, rid=None):
     source = 'crguru'
     cur = db.cursor()
     cur.execute('BEGIN TRANSACTION')
     print('querying guru database')
+    # this ultimately comes from https://play.cryptoraiders.xyz/api/raiders
+    # but that endpoint requires a cookie
     crg_domain = 'europe-west3-cryptoraiders-guru.cloudfunctions.net'
     crg_url = 'https://%s/getRawDatas' % (crg_domain,)
     hdr = {'authority': crg_domain,
@@ -142,6 +179,7 @@ def import_raider_gear(db, rid=None):
         print('  found %d items for %d - [%d] %s from %s' % (
             len(raider['inventory']), raider['tokenId'], raider['level'],
             raider['name'], raider['updatedAt']))
+
         cur.execute('DELETE FROM gear WHERE owner_id = :tokenId', raider)
         for inv in raider['inventory']:
             params = {'name': inv['item']['name'],
@@ -158,6 +196,69 @@ def import_raider_gear(db, rid=None):
                 :name, :equipped, :slot, :owner_id, :source,
                 :strength, :intelligence, :agility, :wisdom, :charm, :luck)''',
                         params)
+
+        params = {
+            'raider': raider['tokenId'],
+            'remaining': raider['raidsRemaining'],
+            'last_raid': iso_datetime_to_secs(raider['lastRaided']),
+            'last_endless': iso_datetime_to_secs(raider['lastEndless']),
+        }
+        cur.execute('''INSERT OR REPLACE INTO raids (
+            raider, remaining, last_raid, last_endless) VALUES (
+            :raider, :remaining, :last_raid, :last_endless)''', params)
+    db.commit()
+
+
+def import_raider_recruitment(db, idlist):
+    cur = db.cursor()
+    recruiting = cf.get_eth_contract('recruiting').functions
+    print('querying recruitment contracts for %s raiders' % (len(idlist),))
+    for rid in idlist:
+        utcnow = int(time.time())
+        # XXX does this return a negative number when a recruit is available?
+        delta = recruiting.nextRecruitTime(rid).call()
+        cur.execute('UPDATE recruiting SET next = ? WHERE raider = ?',
+                    (utcnow + delta, rid))
+    db.commit()
+
+
+def import_raider_quests(db, idlist):
+    def sql_insert(p):
+        cur.execute(
+            'INSERT OR REPLACE INTO quests (%s) VALUES (%s)' % (
+                ', '.join(sorted(p.keys())), ', '.join('?' * len(p))),
+            tuple(p[i] for i in sorted(p.keys())))
+
+    cur = db.cursor()
+    print('querying questing contracts for %s raiders' % (len(idlist),))
+    questing = cf.get_eth_contract('questing-raiders').functions
+
+    for rid in sorted(idlist):
+        params = {'raider': rid}
+        if not questing.onQuest(rid).call():
+            params['status'] = 0
+            sql_insert(params)
+            continue
+        params['contract'] = questing.raiderQuest(rid).call()
+
+        try:
+            myquest = cf.get_eth_contract(address=params['contract']).functions
+        except ValueError:
+            print('unknown quest contract for raider %d: %s' % (
+                rid, params['contract']))
+            continue
+
+        params['status'] = myquest.raiderStatus(rid).call()
+        returning = cf.quest_returning[params['status']]
+        if returning is None:
+            sql_insert(params)
+            continue
+        if returning:
+            params['returns_on'] = myquest.timeHome(rid).call()
+        else:
+            params['started_on'] = myquest.questStartedTime(rid).call()
+            params['return_divisor'] = myquest.returnHomeTimeDivisor().call()
+        sql_insert(params)
     db.commit()
 
 
@@ -173,21 +274,27 @@ def findraider(db, ident):
             return row[0][0]
 
 
-def import_or_update(db, raider=None, gear=False):
+def import_or_update(db, raider=None, gear=True, timing=True):
     if raider is None:
-        import_all_raiders(db)
+        ids = import_all_raiders(db)
     else:
+        ids = (raider,)
         import_one_raider(db, raider)
     if gear:
         import_raider_gear(db, raider)
+    if timing:
+        import_raider_recruitment(db, ids)
+        import_raider_quests(db, ids)
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-r', dest='raider',
                         help='Update only a single raider')
-    parser.add_argument('-g', dest='gear', default=False, action='store_true',
-                        help='import gear from CR guru')
+    parser.add_argument('-G', dest='gear', default=True, action='store_false',
+                        help='Skip import from CR guru')
+    parser.add_argument('-T', dest='times', default=True, action='store_false',
+                        help='Skip retrieving timing information')
     parser.add_argument
     args = parser.parse_args()
 
@@ -207,7 +314,7 @@ def main():
             parser.print_usage()
             sys.exit(1)
 
-    import_or_update(db, raider=raider, gear=args.gear)
+    import_or_update(db, raider=raider, gear=args.gear, timing=args.times)
 
 
 if __name__ == '__main__':
