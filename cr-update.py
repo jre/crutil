@@ -214,11 +214,13 @@ def import_raider_recruitment(db, idlist):
     recruiting = cf.get_eth_contract('recruiting').functions
     print('querying recruitment contracts for %s raiders' % (len(idlist),))
     for rid in idlist:
+        cost = recruiting.getRaiderRecruitCost(rid).call()
         utcnow = int(time.time())
         # XXX does this return a negative number when a recruit is available?
         delta = recruiting.nextRecruitTime(rid).call()
-        cur.execute('UPDATE recruiting SET next = ? WHERE raider = ?',
-                    (utcnow + delta, rid))
+        cur.execute('''INSERT OR REPLACE INTO recruiting (
+            raider, next, cost) VALUES (?, ?, ?)''',
+                    (rid, utcnow + delta, cost))
     db.commit()
 
 
