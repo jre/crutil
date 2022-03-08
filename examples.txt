@@ -16,6 +16,9 @@ List all raiders:
 List all raiders sorted by next recruitment date:
 ./cr-report.py list -s recruit
 
+List all raiders sorted by quest return time:
+./cr-report.py list -s returns
+
 Sort by a list of columns, prefixing with - for reverse sort:
 ./cr-report.py list -s raids,endless,-level
 
