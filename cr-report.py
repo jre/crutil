@@ -114,7 +114,7 @@ def get_raider_raids(cur, rid, last_daily, last_weekly):
     if len(rows) == 0:
         return -1, -1
     raids_left, last_raid, last_endless = rows[0]
-    if last_raid < last_daily.timestamp():
+    if last_raid < last_weekly.timestamp():
         raids_left = cf.cr_weekly_raids
     endless_left = int(last_endless < last_daily.timestamp())
     return raids_left, endless_left
