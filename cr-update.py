@@ -10,6 +10,10 @@ cr_conf = __import__('cr-conf')
 cf = cr_conf.conf
 
 
+def noop(*a, **kw):
+    pass
+
+
 def setupdb(db):
     cur = db.cursor()
 
@@ -69,10 +73,11 @@ def setupdb(db):
     db.commit()
 
 
-def get_owned_raider_nfts():
+def get_owned_raider_nfts(periodic=noop):
     all_nfts = []
     for owner in cf.nft_owners():
         print('querying alchemy for NFTs owned by %s' % (owner,))
+        periodic(message='querying NFTs for %s' % (owner,))
         r = requests.get('%s/%s/getNFTs/?owner=%s&contractAddresses[]=%s' % (
             cf.alchemy_api_url, cf.alchemy_api_key, owner, cf.nft_contract))
         data = r.json()
@@ -95,11 +100,13 @@ def lookup_nft_raider_id(tokenid):
     return data['metadata']['id']
 
 
-def get_questing_raider_ids():
+def get_questing_raider_ids(periodic=noop):
+    periodic(message='fetching contract ABI')
     contract = cf.get_eth_contract('questing-raiders')
     ids = []
     for o in cf.nft_owners():
         print('querying questing raiders via alchemy eth_call for %s' % (o,))
+        periodic(message='querying questing raiders for %s' % (o,))
         owner = cf.get_polygon_web3().toChecksumAddress(o)
         new_ids = contract.functions.getOwnedRaiders(owner).call()
         print('  found %d questing raiders: %s' % (
@@ -108,12 +115,16 @@ def get_questing_raider_ids():
     return ids
 
 
-def import_all_raiders(db):
+def import_all_raiders(db, periodic=noop):
     def rlist(r):
         return ' '.join(sorted(map(str, r)))
-    raiders = set(lookup_nft_raider_id(i) for i in get_owned_raider_nfts())
+    periodic('Counting raiders', 'counting owned raider NFTs on chain')
+    raiders = set(lookup_nft_raider_id(i)
+                  for i in get_owned_raider_nfts(periodic=periodic))
+    periodic(message='counting questing raider NFTs on chain')
     questy = get_questing_raider_ids()
     raiders.update(questy)
+    periodic(message='found %d raiders total' % len(raiders))
 
     cur = db.cursor()
     cur.execute('SELECT id FROM raiders')
@@ -124,40 +135,54 @@ def import_all_raiders(db):
         print('Warning: skipping %d unknown raiders: %s' % (
             len(skipped), rlist(skipped)))
 
+    periodic()
+
     cur.execute('BEGIN TRANSACTION')
     ids = tuple(sorted(raiders))
-    for first in range(0, len(ids), 100):
-        import_raiders(cur, ids[first:first+100])
+    import_raiders(cur, ids, periodic=periodic)
     print('imported or updated %d raiders via CR API' % (len(ids),))
     db.commit()
+    periodic()
     return ids
 
 
-def import_one_raider(db, rid):
+def import_one_raider(db, rid, periodic=noop):
+    periodic()
     cur = db.cursor()
     cur.execute('BEGIN TRANSACTION')
-    import_raiders(cur, (rid,))
+    import_raiders(cur, (rid,), periodic=periodic)
     print('imported or updated raider %d via CR API' % (rid,))
     db.commit()
+    periodic()
 
 
-def import_raiders(cur, ids):
-    r = requests.get('https://api.cryptoraiders.xyz/raiders/',
-                     params={'ids[]': ids})
-    for data in r.json():
-        params = {i['trait_type']: i['value']
-                  for i in data['attributes'] if 'value' in i}
-        params['id'] = data['id']
-        params['image'] = data['image']
-        params['name'] = data['name'].split('] ', 1)[1]
-        cur.execute('''INSERT OR REPLACE INTO raiders (
-            id, name, image,
-            race, generation, birthday, experience, level,
-            strength, intelligence, agility, wisdom, charm, luck) VALUES (
-            :id, :name, :image,
-            :Race, :Generation, :Birthday, :Experience, :Level,
-            :Strength, :Intelligence, :Agility, :Wisdom, :Charm, :Luck)''',
-                    params)
+def import_raiders(cur, all_ids, periodic=noop):
+    periodic('Importing raider data from CR API')
+
+    for first in range(0, len(all_ids), 100):
+        chunk_ids = all_ids[first:first+100]
+        r = requests.get('https://api.cryptoraiders.xyz/raiders/',
+                         params={'ids[]': chunk_ids})
+        periodic()
+        data_rows = r.json()
+
+        periodic(message='imported %d/%d' % (first, len(all_ids)))
+        for data in data_rows:
+            params = {i['trait_type']: i['value']
+                      for i in data['attributes'] if 'value' in i}
+            params['id'] = data['id']
+            params['image'] = data['image']
+            params['name'] = data['name'].split('] ', 1)[1]
+            cur.execute('''INSERT OR REPLACE INTO raiders (
+                id, name, image,
+                race, generation, birthday, experience, level,
+                strength, intelligence, agility, wisdom, charm, luck) VALUES (
+                :id, :name, :image,
+                :Race, :Generation, :Birthday, :Experience, :Level,
+                :Strength, :Intelligence, :Agility, :Wisdom, :Charm, :Luck)''',
+                        params)
+            periodic()
+        periodic(message='%d/%d' % (first + len(data_rows), len(all_ids)))
 
 
 def iso_datetime_to_secs(isotime):
@@ -165,7 +190,8 @@ def iso_datetime_to_secs(isotime):
     return int(dt.timestamp())
 
 
-def import_raider_gear(db, rid=None):
+def import_raider_gear(db, rid=None, periodic=noop):
+    periodic('Importing guru data', message='querying API')
     source = 'crguru'
     cur = db.cursor()
     cur.execute('BEGIN TRANSACTION')
@@ -187,9 +213,12 @@ def import_raider_gear(db, rid=None):
         r = requests.post(crg_url, headers=hdr,
                           json={'data': {'id': owner}})
         if not r.ok:
+            # XXX how to signal failure here and keep going
             print('  failed %d %s' % (r.status_code, r.reason))
             continue
         data = r.json()
+        periodic(message='found data for %d raiders for %s' % (
+            len(data['data']['data']['raiders']), owner))
 
         for raider in data['data']['data']['raiders']:
             if rid is not None and rid != raider['tokenId']:
@@ -199,6 +228,7 @@ def import_raider_gear(db, rid=None):
                 raider['name'], raider['updatedAt']))
 
             cur.execute('DELETE FROM gear WHERE owner_id = :tokenId', raider)
+            periodic()
             for inv in raider['inventory']:
                 params = {'name': inv['item']['name'],
                           'slot': inv['item']['slot'],
@@ -214,6 +244,7 @@ def import_raider_gear(db, rid=None):
                     VALUES (:name, :equipped, :slot, :owner_id, :source,
                     :strength, :intelligence, :agility, :wisdom, :charm, :luck
                     )''', params)
+                periodic()
 
             params = {
                 'raider': raider['tokenId'],
@@ -224,63 +255,86 @@ def import_raider_gear(db, rid=None):
             cur.execute('''INSERT OR REPLACE INTO raids (
                 raider, remaining, last_raid, last_endless) VALUES (
                 :raider, :remaining, :last_raid, :last_endless)''', params)
+            periodic()
     print('finished updating from guru')
     db.commit()
+    periodic()
 
 
-def import_raider_recruitment(db, idlist):
+def import_raider_recruitment(db, idlist, periodic=noop):
+    periodic('Importing recruitment data from chain',
+             message='fetching contract ABI')
     cur = db.cursor()
-    recruiting = cf.get_eth_contract('recruiting').functions
     print('querying recruitment contracts for %s raiders' % (len(idlist),))
-    for rid in idlist:
+    recruiting = cf.get_eth_contract('recruiting').functions
+    for idx, rid in enumerate(sorted(idlist)):
+        periodic(message='%d/%d - raider %d' % (idx, len(idlist), rid))
         cost = recruiting.getRaiderRecruitCost(rid).call()
+        periodic()
         utcnow = int(time.time())
         # XXX does this return a negative number when a recruit is available?
         delta = recruiting.nextRecruitTime(rid).call()
+        periodic()
         cur.execute('''INSERT OR REPLACE INTO recruiting (
             raider, next, cost) VALUES (?, ?, ?)''',
                     (rid, utcnow + delta, cost))
+    periodic(message='%d/%d - done' % (len(idlist), len(idlist)))
     db.commit()
+    periodic()
 
 
-def import_raider_quests(db, idlist):
+def import_raider_quests(db, idlist, periodic=noop):
     def sql_insert(p):
         cur.execute(
             'INSERT OR REPLACE INTO quests (%s) VALUES (%s)' % (
                 ', '.join(sorted(p.keys())), ', '.join('?' * len(p))),
             tuple(p[i] for i in sorted(p.keys())))
+        periodic()
 
     cur = db.cursor()
+    periodic('Importing quest data from chain',
+             message='fetching contract ABI')
     print('querying questing contracts for %s raiders' % (len(idlist),))
     questing = cf.get_eth_contract('questing-raiders').functions
 
-    for rid in sorted(idlist):
+    for idx, rid in enumerate(sorted(idlist)):
+        periodic(message='%d/%d - raider %d' % (idx, len(idlist), rid))
         params = {'raider': rid}
         if not questing.onQuest(rid).call():
+            periodic()
             params['status'] = 0
             sql_insert(params)
             continue
+        periodic()
         params['contract'] = questing.raiderQuest(rid).call()
+        periodic()
 
         try:
             myquest = cf.get_eth_contract(address=params['contract']).functions
+            periodic()
         except ValueError:
             print('unknown quest contract for raider %d: %s' % (
                 rid, params['contract']))
             continue
 
         params['status'] = myquest.raiderStatus(rid).call()
+        periodic()
         returning = cf.quest_returning[params['status']]
         if returning is None:
             sql_insert(params)
             continue
         if returning:
             params['returns_on'] = myquest.timeHome(rid).call()
+            periodic()
         else:
             params['started_on'] = myquest.questStartedTime(rid).call()
+            periodic()
             params['return_divisor'] = myquest.returnHomeTimeDivisor().call()
+            periodic()
         sql_insert(params)
+    periodic(message='%d/%d - done' % (len(idlist), len(idlist)))
     db.commit()
+    periodic()
 
 
 def findraider(db, ident):
@@ -295,17 +349,18 @@ def findraider(db, ident):
             return row[0][0]
 
 
-def import_or_update(db, raider=None, gear=True, timing=True):
+def import_or_update(db, raider=None, gear=True, timing=True,
+                     periodic=noop):
     if raider is None:
-        ids = import_all_raiders(db)
+        ids = import_all_raiders(db, periodic=periodic)
     else:
         ids = (raider,)
-        import_one_raider(db, raider)
+        import_one_raider(db, raider, periodic=periodic)
     if gear:
-        import_raider_gear(db, raider)
+        import_raider_gear(db, raider, periodic=periodic)
     if timing:
-        import_raider_recruitment(db, ids)
-        import_raider_quests(db, ids)
+        import_raider_recruitment(db, ids, periodic=periodic)
+        import_raider_quests(db, ids, periodic=periodic)
 
 
 def main():

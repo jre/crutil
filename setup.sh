@@ -22,7 +22,7 @@ esac
 test -d venv || python3 -m venv venv
 export TMPDIR="${topdir}/venv/tmp"
 mkdir -p "$TMPDIR"
-./venv/bin/pip install appdirs requests web3
+./venv/bin/pip install appdirs pypubsub requests web3
 
 case "$uname_sp" in
     OpenBSD\ *)

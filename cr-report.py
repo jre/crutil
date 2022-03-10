@@ -124,10 +124,10 @@ def get_raider_recruiting(cur, rid, now):
     cur.execute('SELECT next, cost FROM recruiting WHERE raider = ?', (rid,))
     rows = tuple(cur.fetchall())
     if len(rows) == 0:
-        return -1, -1
+        return -2, -1
     next, cost = rows[0]
     if next and next > now.timestamp():
-        return int(next - now.timestamp()), cost
+        return next, cost
     else:
         return 0, cost
 
@@ -163,7 +163,7 @@ def fmt_raider_timedelta(delta):
         return '?'
     elif delta == 0:
         return 'now'
-    parts = str(datetime.timedelta(seconds=delta)).split(',')
+    parts = str(datetime.timedelta(seconds=int(delta))).split(',')
     return ', '.join(tuple(parts[:-1]) + ('%8s' % (parts[-1].strip(),),))
 
 
@@ -175,59 +175,115 @@ def fmt_positive_secs(secs):
     return 'now' if secs == 0 else str(datetime.datetime.fromtimestamp(secs))
 
 
+class TabularReport():
+    def __init__(self, colspec):
+        self.columns = tuple(c[0] for c in colspec)
+        self.labels = tuple(c[1] for c in colspec)
+        self.coltypes = tuple(c[2] for c in colspec)
+        self.right_align = tuple(c[3] for c in colspec)
+        self.col_idx = {k: i for i, k in enumerate(self.columns)}
+
+    @property
+    def colcount(self):
+        return len(self.columns)
+
+
+class RaiderListReport(TabularReport):
+    def __init__(self):
+        super().__init__((
+            ('id', 'ID', 'int', True),
+            ('name', 'Name', 'str', False),
+            ('gen', 'Gen', 'int', True),
+            ('race', 'Race', 'str', False),
+            ('raids', 'Raids', 'positive_count', True),
+            ('endless', 'Endless', 'positive_count', True),
+            ('recruit', 'Recruit', 'epoch_seconds', True),
+            ('cost', 'Cost', 'int', True),
+            ('quest', 'Questing', 'str', False),
+            ('returns', 'Return', 'delta_seconds', True),
+            ('wearing', 'Wearing', 'str', False)))
+
+    def fetch(self, db):
+        cur = db.cursor()
+        cur.execute('SELECT id, name, level, generation, race FROM raiders')
+        rows = tuple(cur.fetchall())
+        now = datetime.datetime.utcnow()
+        last_daily = last_daily_refresh(now)
+        last_weekly = last_weekly_refresh(now)
+
+        for id, name, lvl, gen, race in rows:
+            lvl_name = '[%d] %s' % (lvl, name)
+            raids, endless = get_raider_raids(cur, id, last_daily, last_weekly)
+            recruit_time, recruit_cost = get_raider_recruiting(cur, id, now)
+            quest_status, quest_back = get_raider_questing(cur, id, now)
+            wear_seq = get_equipped(cur, id)
+            wear_str = (', '.join(wear_seq) if wear_seq else 'nothing')
+            yield (id, lvl_name, gen, race, raids, endless,
+                   recruit_time, recruit_cost,
+                   quest_status, quest_back, wear_str)
+
+    def sort(self, rows, sorting=None):
+        if not sorting:
+            sorting = ('id',)
+        sortkey = make_sort_keyfunc(sorting, self.columns)
+        rows.sort(key=sortkey)
+
+
 def show_all_raiders(db, sorting=()):
-    cur = db.cursor()
-    cur.execute('SELECT MAX(LENGTH(id)), MAX(LENGTH(name)) FROM raiders')
-    idlen, namelen = cur.fetchone()
-
-    cur.execute('SELECT id, name, level, generation, race FROM raiders')
-    rows = tuple(cur.fetchall())
-
-    if not sorting:
-        sorting = ('-level', 'id')
-
+    report = RaiderListReport()
+    raw_tbl = list(report.fetch(db))
+    report.sort(raw_tbl, sorting)
     now = datetime.datetime.utcnow()
-    last_daily = last_daily_refresh(now)
-    last_weekly = last_weekly_refresh(now)
-    cols = (('id', str, '%*s'),
-            (('level', 'name'), lambda v: '[%d] %s' % v, '%-*s'),
-            ('gen', str, '%*s'),
-            ('race', str, '%-*s'),
-            ('raids', fmt_positive_count, '%*s'),
-            ('endless', fmt_positive_count, '%*s'),
-            ('recruit', fmt_raider_timedelta, '%*s'),
-            ('cost', str, '%*s'),
-            ('quest', str, '%-*s'),
-            ('returns', fmt_raider_timedelta, '%*s'),
-            ('wearing', str, '%-*s'))
-    widths = [0 for _ in cols]
-    col_labels = {cols[1][0]: lambda c: c[1]}
-    print_hdr = tuple(col_labels.get(c[0], lambda i: i)(c[0]) for c in cols)
-    sortkey = make_sort_keyfunc(sorting, (i[0] for i in cols))
-    raw_tbl = []
-    for id, name, lvl, gen, race in rows:
-        raids, endless = get_raider_raids(cur, id, last_daily, last_weekly)
-        recruit_time, recruit_cost = get_raider_recruiting(cur, id, now)
-        quest_status, quest_back = get_raider_questing(cur, id, now)
-        wear_seq = get_equipped(cur, id)
-        wear_str = (', '.join(wear_seq) if wear_seq else 'nothing')
-        raw_tbl.append((id, (lvl, name), gen, race, raids, endless,
-                        recruit_time, recruit_cost,
-                        quest_status, quest_back, wear_str))
-    raw_tbl.sort(key=sortkey)
 
-    widths = [len(i) for i in print_hdr]
-    final_tbl = [print_hdr]
-    for row in raw_tbl:
-        vals = tuple(cols[i][1](row[i]) for i in range(len(cols)))
-        for i in range(len(cols)):
-            if len(vals[i]) > widths[i]:
-                widths[i] = len(vals[i])
-        final_tbl.append(vals)
+    fmt = {
+        'str': str,
+        'int': str,
+        'positive_count': fmt_positive_count,
+        'delta_seconds': fmt_raider_timedelta,
+        'epoch_seconds': lambda v: fmt_raider_timedelta(v - now.timestamp()
+                                                        if v > 0 else v),
+    }
 
-    for row in final_tbl:
-        print(' '.join(cols[i][2] % (widths[i], row[i])
-                       for i in range(len(cols))))
+    str_tbl = [report.columns]
+    str_tbl.extend(tuple(fmt[report.coltypes[i]](v)
+                         for i, v in enumerate(r)) for r in raw_tbl)
+    widths = [len(i) for i in report.columns]
+    for row in str_tbl:
+        for i in range(report.colcount):
+            if len(row[i]) > widths[i]:
+                widths[i] = len(row[i])
+
+    for row in str_tbl:
+        print(' '.join(('%*s' if report.right_align[i] else '%-*s') % (
+            widths[i], row[i])
+                       for i in range(report.colcount)))
+
+
+def get_raider_slots(cur, rid):
+    cur.execute('''SELECT level, name,
+        strength, intelligence, agility, wisdom, charm, luck
+        FROM raiders WHERE id = ?''', (rid,))
+    rows = tuple(cur.fetchall())
+    if len(rows) == 0:
+        return
+    r_level = rows[0][0]
+    r_name = rows[0][1]
+    r_stats = rows[0][2:]
+
+    names = {None: (r_level, r_name)}
+    stats = {None: r_stats}
+    cur.execute('''SELECT slot, name,
+        strength, intelligence, agility, wisdom, charm, luck
+        FROM gear WHERE owner_id = ? AND equipped''', (rid,))
+    for row in cur.fetchall():
+        g_slot = row[0]
+        g_name = row[1]
+        g_stats = row[2:]
+        assert g_slot in cr_conf.slots
+        names[g_slot] = g_name
+        stats[g_slot] = g_stats
+
+    return names, stats
 
 
 def get_equipped(cur, rid):
@@ -239,7 +295,7 @@ def get_equipped(cur, rid):
 
 
 def skew_stats(stats):
-    stats = tuple(stats)
+    stats = tuple(map(float, stats))
     s = sorted(enumerate(stats[:3]), key=lambda i: i[1])
     s = ((i[0], i[1] * j) for i, j in zip(s, (0.05, 0.7, 1.0)))
     s = (i[1] for i in sorted(s, key=lambda i: i[0]))
@@ -254,106 +310,191 @@ def remove_dups(items):
             yield i
 
 
+class RaiderComboReport(TabularReport):
+    def __init__(self):
+        super().__init__((
+            ('name', 'Name', 'str', False),
+            ('str', 'Stren.', 'float_1', True),
+            ('int', 'Intel.', 'float_1', True),
+            ('dex', 'Agil.', 'float_1', True),
+            ('wis', 'Wis.', 'float_1', True),
+            ('chr', 'Charm', 'float_1', True),
+            ('luck', 'Luck', 'float_1', True),
+            ('hp', 'Health', 'float_1', True),
+            ('mindamg', 'MinDam', 'float_1', True),
+            ('maxdamg', 'MaxDam', 'float_1', True),
+            ('accurac', 'Accur', 'float_1', True),
+            ('hitfrst', 'HitFrst', 'float_1', True),
+            ('critdmg', 'CrtDam', 'float_1', True),
+            ('critrat', 'CrtRate', 'float_1', True),
+            ('critrst', 'CrtResist', 'float_1', True),
+            ('evade', 'Evade', 'float_1', True),
+            ('damgrst', 'DamResist', 'float_1', True),
+            ('total', 'Total', 'float_1', True)))
+
+    def fetch(self, db, rid):
+        _, combos = self.fetch_more(db, rid)
+        return combos
+
+    def fetch_more(self, db, rid):
+        cur = db.cursor()
+        slot_names, slot_stats = get_raider_slots(cur, rid)
+        level = slot_names[None][0]
+        cur_raw_stats = tuple(map(sum, zip(*slot_stats.values())))
+        cur_skewed_stats = skew_stats(cur_raw_stats)
+        cur_derived_stats = derive_stats(level, cur_skewed_stats)
+        cur_stats_all = cur_skewed_stats + cur_derived_stats + \
+            (sum(cur_derived_stats),)
+
+        equipped = {}
+        gear = {}
+        for slot in ('dress', 'main_hand', 'finger'):
+            equipped[slot] = (slot_names[slot],) + slot_stats[slot]
+            cur.execute('''SELECT name,
+                strength, intelligence, agility, wisdom, charm, luck
+                FROM gear WHERE slot = ? AND owner_id = ?''', (slot, rid))
+            gear[slot] = list(remove_dups(cur.fetchall()))
+            if len(gear[slot]) == 0:
+                gear[slot].append(('nothing (%s)' % (slot,), 0, 0, 0, 0, 0, 0))
+        combos = []
+        for weap_row in gear['main_hand']:
+            weap_stats = weap_row[1:]
+            for dress_row in gear['dress']:
+                dress_stats = dress_row[1:]
+                for ring_row in gear['finger']:
+                    ring_stats = ring_row[1:]
+                    new_raw_stats = map(sum, zip(slot_stats[None], weap_stats,
+                                                 dress_stats, ring_stats))
+                    new_raw_stats = tuple(new_raw_stats)
+                    new_skewed_stats = skew_stats(new_raw_stats)
+                    new_derived_stats = derive_stats(level, new_skewed_stats)
+                    new_stats_all = new_skewed_stats + new_derived_stats + \
+                        (sum(new_derived_stats),)
+                    stats_diff = tuple(n - c for n, c in
+                                       zip(new_stats_all, cur_stats_all))
+                    combo_row = ('',) + new_stats_all
+                    diff_row = ('',) + stats_diff
+                    combos.append((combo_row, diff_row,
+                                   weap_row, dress_row, ring_row))
+
+        combos.sort(key=lambda i: i[0][-1], reverse=True)
+        return set(equipped.values()), combos
+
+
 def calc_best_gear(db, rid, count):
+    report = RaiderComboReport()
     cur = db.cursor()
-    cur.execute('''SELECT name, level,
-        strength, intelligence, agility, wisdom, charm, luck
-        FROM raiders WHERE id = ?''', (rid,))
-    row = cur.fetchone()
-    name, lvl = row[:2]
-    id_lvl_name = '%d - [%d] %s' % (rid, lvl, name)
-    base_stats = row[2:]
+    slot_names, slot_stats = get_raider_slots(cur, rid)
+    lvl = slot_names[None][0]
+    id_lvl_name = '%d - [%d] %s' % ((rid,) + slot_names[None])
 
     cur.execute('SELECT MAX(LENGTH(name)) FROM gear WHERE owner_id = ?',
                 (rid,))
     namelen = cur.fetchone()[0]
     if namelen is None:
-        print('Error: no gear found for [%d] %s' % (lvl, name))
+        print('Error: no gear found for %s' % (id_lvl_name,))
         return
 
-    cur.execute('''SELECT slot, name,
-        strength, intelligence, agility, wisdom, charm, luck
-        FROM gear WHERE owner_id = ? AND equipped''', (rid,))
-    raw_stats = base_stats
-    equipped = {i: ('nothing (%s)' % i, 0, 0, 0, 0, 0, 0)
-                for i in cr_conf.slots}
-    for row in cur.fetchall():
-        slot = row[0]
-        name_stats = row[1:]
-        stats = row[2:]
-        equipped[slot] = name_stats
-        raw_stats = tuple(i + j for i, j in zip(raw_stats, stats))
+    raw_stats = tuple(map(sum, zip(*slot_stats.values())))
     cur_eff_stats = skew_stats(raw_stats)
     cur_der_stats = derive_stats(lvl, cur_eff_stats)
 
-    gear = {}
-    for slot in ('dress', 'main_hand', 'finger'):
-        cur.execute('''SELECT name,
-            strength, intelligence, agility, wisdom, charm, luck
-            FROM gear WHERE slot = ? AND owner_id = ?''', (slot, rid))
-        gear[slot] = list(remove_dups(cur.fetchall()))
-        if len(gear[slot]) == 0:
-            gear[slot].append(('nothing (%s)' % (slot,), 0, 0, 0, 0, 0, 0))
-
-    combos = []
-    new = {'': ('',) + base_stats}
-    for weap_row in gear['main_hand']:
-        new['main_hand'] = weap_row
-        for dress_row in gear['dress']:
-            new['dress'] = dress_row
-            for ring_row in gear['finger']:
-                new['finger'] = ring_row
-                no_more_magic = tuple(zip(*new.values()))
-                raw_stats = tuple(sum(i) for i in no_more_magic[1:])
-                new_eff_stats = skew_stats(raw_stats)
-                new_der_stats = derive_stats(lvl, new_eff_stats)
-                combos.append((sum(new_der_stats), new.copy(),
-                               new_eff_stats, new_der_stats))
-    combos.sort(key=lambda i: i[0], reverse=True)
+    combos = list(report.fetch(db, rid))
 
     def fmtstats(s):
         return ' '.join('%7d' % i for i in s)
 
-    print('%-*s  %s' % (namelen, '', fmt_hdr((
-        'str', 'int', 'dex', 'wis', 'chr', 'luck',
-        'hp', 'mindamg', 'maxdamg', 'accurac', 'hitfrst', 'critdmg', 'critrat',
-        'critrst', 'evade', 'damgrst', 'total'), 7)))
+    print('%-*s  %s' % (namelen, report.columns[0],
+                        fmt_hdr(report.columns[1:], 7)))
     cur_stats_line = cur_eff_stats + cur_der_stats + (sum(cur_der_stats),)
     print(fmt_base('%-*s  %s\n' * 5) % (
-        namelen, id_lvl_name, fmtstats(base_stats),
-        namelen, equipped['main_hand'][0], fmtstats(equipped['main_hand'][1:]),
-        namelen, equipped['dress'][0], fmtstats(equipped['dress'][1:]),
-        namelen, equipped['finger'][0], fmtstats(equipped['finger'][1:]),
+        namelen, id_lvl_name, fmtstats(slot_stats[None]),
+        namelen, slot_names['main_hand'], fmtstats(slot_stats['main_hand']),
+        namelen, slot_names['dress'], fmtstats(slot_stats['dress']),
+        namelen, slot_names['finger'], fmtstats(slot_stats['finger']),
         namelen, '', fmtstats(cur_stats_line)))
-    for (total, new, efstats, derstats) in combos[:count]:
-        statsline = efstats + derstats + (total,)
-        stats_diff = tuple(j - i for i, j in zip(cur_stats_line, statsline))
+    for combo_row, diff_row, weap_row, dress_row, ring_row in combos[:count]:
         cur_equipment = True
-        for slot in ('main_hand', 'dress', 'finger'):
+        for slot, row in (('main_hand', weap_row),
+                          ('dress', dress_row),
+                          ('finger', ring_row)):
             stats = '%-*s  %s' % (
-                namelen, new[slot][0], fmtstats(new[slot][1:]))
-            if equipped[slot] == new[slot]:
+                namelen, row[0], fmtstats(row[1:]))
+            if slot_names[slot] == row[0] and \
+               slot_stats[slot] == row[1:]:
                 print(fmt_base(stats))
             else:
                 cur_equipment = False
                 print(stats)
         if cur_equipment:
-            print('%-*s  %s\n' % (namelen, '', fmt_base(fmtstats(statsline))))
+            print('%-*s  %s\n' % (namelen, '',
+                                  fmt_base(fmtstats(combo_row[1:]))))
         else:
             print('%-*s  %s\n%-*s  %s\n' % (
-                namelen, '', fmtstats(statsline),
+                namelen, '', fmtstats(combo_row[1:]),
                 namelen, '', ' '.join(fmt_stat_diff(i, 7)
-                                      for i in stats_diff)))
+                                      for i in diff_row[1:])))
+
+
+class RaiderGearReport(TabularReport):
+    def __init__(self):
+        super().__init__((
+            ('name', 'Name', 'str', False),
+            ('str', 'Stren.', 'float_1', True),
+            ('int', 'Intel.', 'float_1', True),
+            ('dex', 'Agil.', 'float_1', True),
+            ('wis', 'Wis.', 'float_1', True),
+            ('chr', 'Charm', 'float_1', True),
+            ('luck', 'Luck', 'float_1', True),
+            ('hp', 'Health', 'float_1', True),
+            ('mindamg', 'MinDam', 'float_1', True),
+            ('maxdamg', 'MaxDam', 'float_1', True),
+            ('accurac', 'Accur', 'float_1', True),
+            ('hitfrst', 'HitFrst', 'float_1', True),
+            ('critdmg', 'CrtDam', 'float_1', True),
+            ('critrat', 'CrtRate', 'float_1', True),
+            ('critrst', 'CrtResist', 'float_1', True),
+            ('evade', 'Evade', 'float_1', True),
+            ('damgrst', 'DamResist', 'float_1', True),
+            ('total', 'Total', 'float_1', True)))
+
+    def fetch(self, db, rid):
+        cur = db.cursor()
+
+        slot_names, slot_stats = get_raider_slots(cur, rid)
+        level = slot_names[None][0]
+        raw_stats = tuple(map(sum, zip(*slot_stats.values())))
+
+        combined_stats = skew_stats(raw_stats)
+        full_stats = derive_stats(level, combined_stats)
+        total = sum(full_stats)
+
+        cur.execute('''SELECT name, slot,
+            strength, intelligence, agility, wisdom, charm, luck
+            FROM gear WHERE owner_id = ?''', (rid,))
+        for row in cur.fetchall():
+            name = row[0]
+            slot = row[1]
+            item_stats = row[2:]
+            old_slot_stats = slot_stats.get(slot, (0, 0, 0, 0, 0, 0))
+            new_raw_stats = (i - j + k for i, j, k in
+                             zip(raw_stats, old_slot_stats, item_stats))
+            new_comb_stats = skew_stats(new_raw_stats)
+            new_full_stats = derive_stats(level, new_comb_stats)
+            new_total = sum(new_full_stats)
+            diff = tuple(j - i for i, j in zip(
+                combined_stats + full_stats + (total,),
+                new_comb_stats + new_full_stats + (new_total,)))
+            yield (name,) + diff
 
 
 def show_raider(db, rid):
+    report = RaiderGearReport()
     cur = db.cursor()
-    cur.execute('''SELECT name, level, generation, race,
-        strength, intelligence, agility, wisdom, charm, luck
+    cur.execute('''SELECT name, level, generation, race
         FROM raiders WHERE id = ?''', (rid,))
     row = cur.fetchone()
-    name, lvl, gen, race = row[:4]
-    base_stats = row[4:]
+    name, lvl, gen, race = row
     wearing = get_equipped(cur, rid)
     print('%d  [%d] %s  - gen %d %s wearing %s' % (
         rid, lvl, name, gen, race,
@@ -365,42 +506,14 @@ def show_raider(db, rid):
     if namelen is None:
         print('Error: no gear found for [%d] %s' % (lvl, name))
         return
-    cur.execute('''SELECT slot,
-        strength, intelligence, agility, wisdom, charm, luck
-        FROM gear WHERE owner_id = ? AND equipped''', (rid,))
-    gear = {}
 
-    raw_stats = base_stats
-    for row in cur.fetchall():
-        gear[row[0]] = row[1:]
-        raw_stats = tuple(i + j for i, j in zip(raw_stats, row[1:]))
-    eff_stats = skew_stats(raw_stats)
-    der_stats = derive_stats(lvl, eff_stats)
-    total = sum(der_stats)
-
-    hdr = ' '.join('%7s' % i for i in (
-        'str', 'int', 'dex', 'wis', 'chr', 'luck',
-        'hp', 'mindamg', 'maxdamg', 'accurac', 'hitfrst', 'critdmg', 'critrat',
-        'critrst', 'evade', 'damgrst', 'total'))
-    print('%-*s  %s' % (namelen, '', hdr))
-    cur.execute('''SELECT name, slot,
-        strength, intelligence, agility, wisdom, charm, luck
-        FROM gear WHERE owner_id = ? ORDER BY name''', (rid,))
-    for row in cur.fetchall():
-        name = row[0]
-        slot = row[1]
-        item_stats = row[2:]
-        slot_stats = gear.get(slot, (0, 0, 0, 0, 0, 0))
-        new_raw_stats = (i - j + k for i, j, k in
-                         zip(raw_stats, slot_stats, item_stats))
-        new_eff_stats = skew_stats(new_raw_stats)
-        new_der_stats = derive_stats(lvl, new_eff_stats)
-        new_total = sum(new_der_stats)
-        stats_diff = tuple(j - i for i, j in zip(
-            eff_stats + der_stats + (total,),
-            new_eff_stats + new_der_stats + (new_total,)))
+    gear = list(report.fetch(db, rid))
+    gear.sort(key=lambda v: v[0])
+    print('%-*s  %s' % (
+        namelen, '', ' '.join('%7s' % i for i in report.columns)))
+    for row in gear:
         print('%-*s  %s' % (
-            namelen, name, ' '.join(fmt_stat_diff(i, 7) for i in stats_diff)))
+            namelen, row[0], ' '.join(fmt_stat_diff(i, 7) for i in row[1:])))
 
 
 def fmt_stat_diff(stat, width):
