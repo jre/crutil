@@ -70,14 +70,21 @@ def setupdb(db):
 
 
 def get_owned_raider_nfts():
-    print('querying polygon owned NFTs via alchemy')
-    r = requests.get('%s/%s/getNFTs/?owner=%s&contractAddresses[]=%s' % (
-        cf.alchemy_api_url, cf.alchemy_api_key, cf.nft_owner, cf.nft_contract))
-    data = r.json()
-    print('found %d raider NFTs' % (data['totalCount'],))
-    for nft in data['ownedNfts']:
-        if nft['contract']['address'] == cf.nft_contract:
-            yield nft['id']['tokenId']
+    all_nfts = []
+    for owner in cf.nft_owners():
+        print('querying alchemy for NFTs owned by %s' % (owner,))
+        r = requests.get('%s/%s/getNFTs/?owner=%s&contractAddresses[]=%s' % (
+            cf.alchemy_api_url, cf.alchemy_api_key, owner, cf.nft_contract))
+        data = r.json()
+        found = tuple(n['id']['tokenId']
+                      for n in data['ownedNfts']
+                      if n['contract']['address'] == cf.nft_contract)
+        print('  found %d raider NFTs: %s' % (
+            data['totalCount'],
+            ' '.join(str(int(i.lower().lstrip('0x').lstrip('0'), 16))
+                     for i in found)))
+        all_nfts.extend(found)
+    return all_nfts
 
 
 def lookup_nft_raider_id(tokenid):
@@ -90,18 +97,22 @@ def lookup_nft_raider_id(tokenid):
 
 def get_questing_raider_ids():
     contract = cf.get_eth_contract('questing-raiders')
-    print('querying questing raiders via alchemy eth_call')
-    owner = cf.get_polygon_web3().toChecksumAddress(cf.nft_owner)
-    return contract.functions.getOwnedRaiders(owner).call()
+    ids = []
+    for o in cf.nft_owners():
+        print('querying questing raiders via alchemy eth_call for %s' % (o,))
+        owner = cf.get_polygon_web3().toChecksumAddress(o)
+        new_ids = contract.functions.getOwnedRaiders(owner).call()
+        print('  found %d questing raiders: %s' % (
+            len(new_ids), ' '.join(map(str, new_ids))))
+        ids.extend(new_ids)
+    return ids
 
 
 def import_all_raiders(db):
     def rlist(r):
         return ' '.join(sorted(map(str, r)))
     raiders = set(lookup_nft_raider_id(i) for i in get_owned_raider_nfts())
-    print('  found %d owned raiders: %s' % (len(raiders), rlist(raiders)))
     questy = get_questing_raider_ids()
-    print('  found %d questing raiders: %s' % (len(questy), rlist(questy)))
     raiders.update(questy)
 
     cur = db.cursor()
@@ -158,7 +169,7 @@ def import_raider_gear(db, rid=None):
     source = 'crguru'
     cur = db.cursor()
     cur.execute('BEGIN TRANSACTION')
-    print('querying guru database')
+
     # this ultimately comes from https://play.cryptoraiders.xyz/api/raiders
     # but that endpoint requires a cookie
     crg_domain = 'europe-west3-cryptoraiders-guru.cloudfunctions.net'
@@ -169,43 +180,51 @@ def import_raider_gear(db, rid=None):
            'sec-fetch-site': 'cross-site',
            'sec-fetch-mode': 'cors',
            'sec-fetch-dest': 'empty'}
-    r = requests.post(crg_url, headers=hdr,
-                      json={'data': {'id': cf.nft_owner}})
-    data = r.json()
     stats = ('strength', 'intelligence', 'agility', 'wisdom', 'charm', 'luck')
-    for raider in data['data']['data']['raiders']:
-        if rid is not None and rid != raider['tokenId']:
+
+    for owner in cf.nft_owners():
+        print('querying guru database for %s' % (owner,))
+        r = requests.post(crg_url, headers=hdr,
+                          json={'data': {'id': owner}})
+        if not r.ok:
+            print('  failed %d %s' % (r.status_code, r.reason))
             continue
-        print('  found %d items for %d - [%d] %s from %s' % (
-            len(raider['inventory']), raider['tokenId'], raider['level'],
-            raider['name'], raider['updatedAt']))
+        data = r.json()
 
-        cur.execute('DELETE FROM gear WHERE owner_id = :tokenId', raider)
-        for inv in raider['inventory']:
-            params = {'name': inv['item']['name'],
-                      'slot': inv['item']['slot'],
-                      'equipped': bool(inv.get('equipped')),
-                      'owner_id': raider['tokenId'],
-                      'source': source}
-            params.update({s: 0 for s in stats})
-            if inv['item'].get('stats'):
-                params.update(inv['item']['stats'])
-            cur.execute('''INSERT INTO gear (
-                name, equipped, slot, owner_id, source,
-                strength, intelligence, agility, wisdom, charm, luck) VALUES (
-                :name, :equipped, :slot, :owner_id, :source,
-                :strength, :intelligence, :agility, :wisdom, :charm, :luck)''',
-                        params)
+        for raider in data['data']['data']['raiders']:
+            if rid is not None and rid != raider['tokenId']:
+                continue
+            print('  found %d items for %d - [%d] %s from %s' % (
+                len(raider['inventory']), raider['tokenId'], raider['level'],
+                raider['name'], raider['updatedAt']))
 
-        params = {
-            'raider': raider['tokenId'],
-            'remaining': raider['raidsRemaining'],
-            'last_raid': iso_datetime_to_secs(raider['lastRaided']),
-            'last_endless': iso_datetime_to_secs(raider['lastEndless']),
-        }
-        cur.execute('''INSERT OR REPLACE INTO raids (
-            raider, remaining, last_raid, last_endless) VALUES (
-            :raider, :remaining, :last_raid, :last_endless)''', params)
+            cur.execute('DELETE FROM gear WHERE owner_id = :tokenId', raider)
+            for inv in raider['inventory']:
+                params = {'name': inv['item']['name'],
+                          'slot': inv['item']['slot'],
+                          'equipped': bool(inv.get('equipped')),
+                          'owner_id': raider['tokenId'],
+                          'source': source}
+                params.update({s: 0 for s in stats})
+                if inv['item'].get('stats'):
+                    params.update(inv['item']['stats'])
+                cur.execute('''INSERT INTO gear (
+                    name, equipped, slot, owner_id, source,
+                    strength, intelligence, agility, wisdom, charm, luck)
+                    VALUES (:name, :equipped, :slot, :owner_id, :source,
+                    :strength, :intelligence, :agility, :wisdom, :charm, :luck
+                    )''', params)
+
+            params = {
+                'raider': raider['tokenId'],
+                'remaining': raider['raidsRemaining'],
+                'last_raid': iso_datetime_to_secs(raider['lastRaided']),
+                'last_endless': iso_datetime_to_secs(raider['lastEndless']),
+            }
+            cur.execute('''INSERT OR REPLACE INTO raids (
+                raider, remaining, last_raid, last_endless) VALUES (
+                :raider, :remaining, :last_raid, :last_endless)''', params)
+    print('finished updating from guru')
     db.commit()
 
 

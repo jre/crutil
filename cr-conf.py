@@ -63,6 +63,9 @@ class CRConf():
         }
         self._loaded = {i: {} for i in self._schema.keys()}
 
+    def nft_owners(self):
+        return ' '.join(self.nft_owner.split(',')).split()
+
     def makedirs(self):
         if not os.path.exists(self._confdir):
             os.makedirs(self._confdir)
