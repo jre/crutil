@@ -417,7 +417,7 @@ class CRUtilRoot(wx.Frame):
         self.db = self.getdb()
         self.raider = None
         self.updating = None
-        self.CreateStatusBar().SetFieldsCount(2)
+        self.CreateStatusBar()
         RaiderToolbar(self)
 
         pub_subscribe(self.handle_update_rebuilt, 'update-rebuilt')
@@ -453,8 +453,8 @@ class CRUtilRoot(wx.Frame):
     def set_status_text(self, section, message=''):
         bar = self.GetStatusBar()
         if bar:
-            bar.SetStatusText(section, 0)
-            bar.SetStatusText(message, 1)
+            bar.SetStatusText('%s - %s' % (section, message) if message
+                              else section)
 
 
 def main():
