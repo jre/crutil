@@ -349,7 +349,8 @@ class RaiderComboReport(TabularReport):
         equipped = {}
         gear = {}
         for slot in ('dress', 'main_hand', 'finger'):
-            equipped[slot] = (slot_names[slot],) + slot_stats[slot]
+            if slot in slot_names:
+                equipped[slot] = (slot_names[slot],) + slot_stats[slot]
             cur.execute('''SELECT name,
                 strength, intelligence, agility, wisdom, charm, luck
                 FROM gear WHERE slot = ? AND owner_id = ?''', (slot, rid))
