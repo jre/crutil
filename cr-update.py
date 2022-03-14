@@ -76,15 +76,14 @@ def setupdb(db):
 def get_owned_raider_nfts(periodic=noop):
     all_nfts = []
     for owner in cf.nft_owners():
-        print('querying alchemy for NFTs owned by %s' % (owner,))
-        periodic(message='querying NFTs for %s' % (owner,))
+        periodic(message='querying raider NFTs for %s' % (owner,))
         r = requests.get('%s/%s/getNFTs/?owner=%s&contractAddresses[]=%s' % (
             cf.alchemy_api_url, cf.alchemy_api_key, owner, cf.nft_contract))
         data = r.json()
         found = tuple(n['id']['tokenId']
                       for n in data['ownedNfts']
                       if n['contract']['address'] == cf.nft_contract)
-        print('  found %d raider NFTs: %s' % (
+        periodic(message='found %d raider NFTs: %s' % (
             data['totalCount'],
             ' '.join(str(int(i.lower().lstrip('0x').lstrip('0'), 16))
                      for i in found)))
@@ -105,11 +104,10 @@ def get_questing_raider_ids(periodic=noop):
     contract = cf.get_eth_contract('questing-raiders')
     ids = []
     for o in cf.nft_owners():
-        print('querying questing raiders via alchemy eth_call for %s' % (o,))
         periodic(message='querying questing raiders for %s' % (o,))
         owner = cf.get_polygon_web3().toChecksumAddress(o)
         new_ids = contract.functions.getOwnedRaiders(owner).call()
-        print('  found %d questing raiders: %s' % (
+        periodic(message='found %d questing raiders: %s' % (
             len(new_ids), ' '.join(map(str, new_ids))))
         ids.extend(new_ids)
     return ids
@@ -140,7 +138,6 @@ def import_all_raiders(db, periodic=noop):
     cur.execute('BEGIN TRANSACTION')
     ids = tuple(sorted(raiders))
     import_raiders(cur, ids, periodic=periodic)
-    print('imported or updated %d raiders via CR API' % (len(ids),))
     db.commit()
     periodic()
     return ids
@@ -151,7 +148,6 @@ def import_one_raider(db, rid, periodic=noop):
     cur = db.cursor()
     cur.execute('BEGIN TRANSACTION')
     import_raiders(cur, (rid,), periodic=periodic)
-    print('imported or updated raider %d via CR API' % (rid,))
     db.commit()
     periodic()
 
@@ -161,12 +157,12 @@ def import_raiders(cur, all_ids, periodic=noop):
 
     for first in range(0, len(all_ids), 100):
         chunk_ids = all_ids[first:first+100]
+        periodic(message='fetching %d raiders' % (len(chunk_ids),))
         r = requests.get('https://api.cryptoraiders.xyz/raiders/',
                          params={'ids[]': chunk_ids})
         periodic()
         data_rows = r.json()
 
-        periodic(message='imported %d/%d' % (first, len(all_ids)))
         for data in data_rows:
             params = {i['trait_type']: i['value']
                       for i in data['attributes'] if 'value' in i}
@@ -182,7 +178,8 @@ def import_raiders(cur, all_ids, periodic=noop):
                 :Strength, :Intelligence, :Agility, :Wisdom, :Charm, :Luck)''',
                         params)
             periodic()
-        periodic(message='%d/%d' % (first + len(data_rows), len(all_ids)))
+        periodic(message='imported %d/%d' % (first + len(data_rows),
+                                             len(all_ids)))
 
 
 def iso_datetime_to_secs(isotime):
@@ -209,7 +206,7 @@ def import_raider_gear(db, rid=None, periodic=noop):
     stats = ('strength', 'intelligence', 'agility', 'wisdom', 'charm', 'luck')
 
     for owner in cf.nft_owners():
-        print('querying guru database for %s' % (owner,))
+        periodic(message='querying guru database for %s' % (owner,))
         r = requests.post(crg_url, headers=hdr,
                           json={'data': {'id': owner}})
         if not r.ok:
@@ -223,7 +220,7 @@ def import_raider_gear(db, rid=None, periodic=noop):
         for raider in data['data']['data']['raiders']:
             if rid is not None and rid != raider['tokenId']:
                 continue
-            print('  found %d items for %d - [%d] %s from %s' % (
+            periodic(message='found %d items for %d - [%d] %s from %s' % (
                 len(raider['inventory']), raider['tokenId'], raider['level'],
                 raider['name'], raider['updatedAt']))
 
@@ -256,7 +253,6 @@ def import_raider_gear(db, rid=None, periodic=noop):
                 raider, remaining, last_raid, last_endless) VALUES (
                 :raider, :remaining, :last_raid, :last_endless)''', params)
             periodic()
-    print('finished updating from guru')
     db.commit()
     periodic()
 
@@ -265,7 +261,6 @@ def import_raider_recruitment(db, idlist, periodic=noop):
     periodic('Importing recruitment data from chain',
              message='fetching contract ABI')
     cur = db.cursor()
-    print('querying recruitment contracts for %s raiders' % (len(idlist),))
     recruiting = cf.get_eth_contract('recruiting').functions
     for idx, rid in enumerate(sorted(idlist)):
         periodic(message='%d/%d - raider %d' % (idx, len(idlist), rid))
@@ -294,7 +289,6 @@ def import_raider_quests(db, idlist, periodic=noop):
     cur = db.cursor()
     periodic('Importing quest data from chain',
              message='fetching contract ABI')
-    print('querying questing contracts for %s raiders' % (len(idlist),))
     questing = cf.get_eth_contract('questing-raiders').functions
 
     for idx, rid in enumerate(sorted(idlist)):
@@ -352,8 +346,10 @@ def findraider(db, ident):
 def import_or_update(db, raider=None, gear=True, timing=True,
                      periodic=noop):
     if raider is None:
+        periodic('Updating all raiders')
         ids = import_all_raiders(db, periodic=periodic)
     else:
+        periodic('Updating raider %d' % (raider,))
         ids = (raider,)
         import_one_raider(db, raider, periodic=periodic)
     if gear:
@@ -390,7 +386,18 @@ def main():
             parser.print_usage()
             sys.exit(1)
 
-    import_or_update(db, raider=raider, gear=args.gear, timing=args.times)
+    last_section = ['']
+
+    def showstatus(section=None, message=None):
+        if section:
+            last_section[0] = section
+        if message:
+            print(' %s: %s' % (last_section[0], message))
+        elif section:
+            print(' %s' % (section,))
+
+    import_or_update(db, raider=raider, gear=args.gear, timing=args.times,
+                     periodic=showstatus)
 
 
 if __name__ == '__main__':
