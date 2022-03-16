@@ -214,7 +214,7 @@ def import_one_raider(db, rid, periodic=noop):
     periodic()
     cur = db.cursor()
     cur.execute('BEGIN TRANSACTION')
-    import_raiders(cur, (rid,), periodic=periodic)
+    import_raiders(cur, (rid,), full=True, periodic=periodic)
     db.commit()
     periodic()
 
