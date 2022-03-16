@@ -22,6 +22,7 @@ class CRConf():
         self.nft_contract = '0xfd12ec7ea4b381a79c78fe8b2248b4c559011ffb'
         # note: mounts nft is 0x7f2e8b6c55fcc5c52df495065d2147b9eab2cc54
         self.quest_returning = (None, False, True)
+        self.cr_api_url = 'https://api.cryptoraiders.xyz'
         self.alchemy_api_url = 'https://polygon-mainnet.g.alchemy.com/v2'
         self.polygonscan_api_url = 'https://api.polygonscan.com/api'
         self.crg_domain = 'europe-west3-cryptoraiders-guru.cloudfunctions.net'
@@ -51,6 +52,11 @@ class CRConf():
 
         self._polygon_web3 = None
         self._schema = {
+            'crypto-raiders': {
+                'cr_api_key': (
+                    'Crypto Raiders API Key',
+                    'An API key for cryptoraiders.xyz'),
+            },
             'polygon': {
                 'alchemy_api_key': (
                     'Alchemy API Key', 'An API key for alchemy.com'),
