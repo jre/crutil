@@ -16,6 +16,18 @@ def noop(*a, **kw):
     pass
 
 
+_last_section = ['']
+
+
+def periodic_print(section=None, message=None):
+    if section:
+        _last_section[0] = section
+    if message:
+        print(' %s: %s' % (_last_section[0], message))
+    elif section:
+        print(' %s' % (section,))
+
+
 def setupdb(db):
     cur = db.cursor()
 
@@ -525,18 +537,8 @@ def main():
             parser.print_usage()
             sys.exit(1)
 
-    last_section = ['']
-
-    def showstatus(section=None, message=None):
-        if section:
-            last_section[0] = section
-        if message:
-            print(' %s: %s' % (last_section[0], message))
-        elif section:
-            print(' %s' % (section,))
-
     import_or_update(db, raider=raider, gear=args.gear, timing=args.times,
-                     periodic=showstatus)
+                     periodic=periodic_print)
 
 
 if __name__ == '__main__':
