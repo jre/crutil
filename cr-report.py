@@ -116,6 +116,8 @@ def get_raider_raids(cur, rid, last_daily, last_weekly):
     raids_left, last_raid, last_endless = rows[0]
     if last_raid < last_weekly.timestamp():
         raids_left = cf.cr_weekly_raids
+    if not last_endless:
+        return raids_left, -1
     endless_left = int(last_endless < last_daily.timestamp())
     return raids_left, endless_left
 
@@ -272,9 +274,10 @@ def get_raider_slots(cur, rid):
 
     names = {None: (r_level, r_name)}
     stats = {None: r_stats}
-    cur.execute('''SELECT slot, name,
-        strength, intelligence, agility, wisdom, charm, luck
-        FROM gear WHERE owner_id = ? AND equipped''', (rid,))
+    cur.execute('''SELECT l.slot, u.name,
+        u.strength, u.intelligence, u.agility, u.wisdom, u.charm, u.luck
+        FROM gear_localid l, gear_uniq u WHERE l.dedup_id = u.dedup_id
+        AND l.raider_id = ? AND l.equipped''', (rid,))
     for row in cur.fetchall():
         g_slot = row[0]
         g_name = row[1]
@@ -287,7 +290,8 @@ def get_raider_slots(cur, rid):
 
 
 def get_equipped(cur, rid):
-    cur.execute('SELECT slot, name FROM gear WHERE owner_id = ? AND equipped',
+    cur.execute('''SELECT l.slot, u.name FROM gear_localid l, gear_uniq u
+       WHERE l.dedup_id = u.dedup_id AND l.raider_id = ? AND l.equipped''',
                 (rid,))
     gear = dict(cur.fetchall())
     assert not set(gear).difference(cr_conf.slots), cr_conf.slots
@@ -351,9 +355,11 @@ class RaiderComboReport(TabularReport):
         for slot in ('dress', 'main_hand', 'finger'):
             if slot in slot_names:
                 equipped[slot] = (slot_names[slot],) + slot_stats[slot]
-            cur.execute('''SELECT name,
-                strength, intelligence, agility, wisdom, charm, luck
-                FROM gear WHERE slot = ? AND owner_id = ?''', (slot, rid))
+            cur.execute('''SELECT u.name, u.strength,
+                u.intelligence, u.agility, u.wisdom, u.charm, u.luck
+                FROM gear_uniq u, gear_localid l
+                WHERE u.dedup_id = l.dedup_id
+                AND slot = ? AND raider_id = ?''', (slot, rid))
             gear[slot] = list(remove_dups(cur.fetchall()))
             if len(gear[slot]) == 0:
                 gear[slot].append(('nothing (%s)' % (slot,), 0, 0, 0, 0, 0, 0))
@@ -389,8 +395,7 @@ def calc_best_gear(db, rid, count):
     lvl = slot_names[None][0]
     id_lvl_name = '%d - [%d] %s' % ((rid,) + slot_names[None])
 
-    cur.execute('SELECT MAX(LENGTH(name)) FROM gear WHERE owner_id = ?',
-                (rid,))
+    cur.execute('SELECT MAX(LENGTH(name)) FROM gear_uniq')
     namelen = cur.fetchone()[0]
     if namelen is None:
         print('Error: no gear found for %s' % (id_lvl_name,))
@@ -470,9 +475,10 @@ class RaiderGearReport(TabularReport):
         full_stats = derive_stats(level, combined_stats)
         total = sum(full_stats)
 
-        cur.execute('''SELECT name, slot,
-            strength, intelligence, agility, wisdom, charm, luck
-            FROM gear WHERE owner_id = ?''', (rid,))
+        cur.execute('''SELECT u.name, l.slot,
+            u.strength, u.intelligence, u.agility, u.wisdom, u.charm, u.luck
+            FROM gear_uniq u, gear_localid l
+            WHERE u.dedup_id = l.dedup_id AND raider_id = ?''', (rid,))
         for row in cur.fetchall():
             name = row[0]
             slot = row[1]
@@ -501,8 +507,7 @@ def show_raider(db, rid):
         rid, lvl, name, gen, race,
         ', '.join(wearing) if wearing else 'nothing'))
 
-    cur.execute('SELECT MAX(LENGTH(name)) FROM gear WHERE owner_id = ?',
-                (rid,))
+    cur.execute('SELECT MAX(LENGTH(name)) FROM gear_uniq')
     namelen = cur.fetchone()[0]
     if namelen is None:
         print('Error: no gear found for [%d] %s' % (lvl, name))

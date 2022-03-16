@@ -5,6 +5,7 @@ import argparse
 import sys
 import time
 import datetime
+import json
 
 cr_conf = __import__('cr-conf')
 cf = cr_conf.conf
@@ -34,19 +35,26 @@ def setupdb(db):
         charm INTEGER,
         luck INTEGER)''')
 
-    cur.execute('''CREATE TABLE IF NOT EXISTS gear(
-        name VARCHAR(255),
+    cur.execute('''CREATE TABLE IF NOT EXISTS gear_localid(
+        local_id INTEGER PRIMARY KEY,
         equipped INTEGER,
         slot VARCHAR(255),
+        raider_id INTEGER,
+        source VARCHAR(255),
+        dedup_id INTEGER,
+        FOREIGN KEY(raider_id) REFERENCES raiders(id),
+        FOREIGN KEY(dedup_id) REFERENCES gear_uniq(dedup_id))''')
+
+    cur.execute('''CREATE TABLE IF NOT EXISTS gear_uniq(
+        dedup_id INTEGER PRIMARY KEY,
+        key VARCHAR(255) UNIQUE,
+        name VARCHAR(255),
         strength INTEGER,
         intelligence INTEGER,
         agility INTEGER,
         wisdom INTEGER,
         charm INTEGER,
-        luck INTEGER,
-        owner_id INTEGER,
-        source VARCHAR(255),
-        FOREIGN KEY(owner_id) REFERENCES raiders(id))''')
+        luck INTEGER)''')
 
     cur.execute('''CREATE TABLE IF NOT EXISTS raids(
         raider INTEGER PRIMARY KEY,
@@ -70,6 +78,52 @@ def setupdb(db):
         returns_on INTEGER,
         FOREIGN KEY(raider) REFERENCES raiders(id))''')
 
+    db.commit()
+
+
+def ensure_dedup_gear(cur, name_stats):
+    assert len(name_stats) == 7
+    key = json.dumps(name_stats)
+    cur.execute('SELECT dedup_id FROM gear_uniq WHERE key = ?', (key,))
+    rows = cur.fetchall()
+    if len(rows):
+        return rows[0][0]
+
+    cur.execute('''INSERT INTO gear_uniq (key, name,
+        strength, intelligence, agility, wisdom, charm, luck) VALUES (
+        ?, ?, ?, ?, ?, ?, ?, ?)''', (key,) + tuple(name_stats))
+    return cur.lastrowid
+
+
+def raider_has_gear(cur, raider_id, dedup_id):
+    cur.execute('''SELECT local_id FROM gear_localid
+        WHERE dedup_id = ? AND raider_id = ?''', (dedup_id, raider_id))
+    rows = cur.fetchall()
+    if len(rows):
+        return rows[0][0]
+
+
+def migrate_old_gear(db, periodic=noop):
+    cur = db.cursor()
+    periodic(message='migrating gear to deduplicated tables')
+    cur.execute('''SELECT equipped, slot, owner_id, source,
+        name, strength, intelligence, agility, wisdom, charm, luck
+        FROM gear''')
+    rows = cur.fetchall()
+
+    count = 0
+    for row in rows:
+        periodic()
+        equip, slot, raider_id, source = row[:4]
+        name_stats = row[4:]
+        dedup_id = ensure_dedup_gear(cur, name_stats)
+        if raider_has_gear(cur, raider_id, dedup_id):
+            continue
+        cur.execute('''INSERT INTO gear_localid (equipped, slot, raider_id,
+            source, dedup_id) VALUES (?, ?, ?, ?, ?)''', (
+                equip, slot, raider_id, source, dedup_id))
+        count += 1
+    periodic(message='migrated %d gear items' % (count,))
     db.commit()
 
 
@@ -204,6 +258,7 @@ def import_raider_gear(db, rid=None, periodic=noop):
            'sec-fetch-mode': 'cors',
            'sec-fetch-dest': 'empty'}
     stats = ('strength', 'intelligence', 'agility', 'wisdom', 'charm', 'luck')
+    found = {}
 
     for owner in cf.nft_owners():
         periodic(message='querying guru database for %s' % (owner,))
@@ -218,33 +273,37 @@ def import_raider_gear(db, rid=None, periodic=noop):
             len(data['data']['data']['raiders']), owner))
 
         for raider in data['data']['data']['raiders']:
-            if rid is not None and rid != raider['tokenId']:
+            raider_id = raider['tokenId']
+            if rid is not None and rid != raider_id:
                 continue
+            found.setdefault(raider_id, 0)
             periodic(message='found %d items for %d - [%d] %s from %s' % (
-                len(raider['inventory']), raider['tokenId'], raider['level'],
+                len(raider['inventory']), raider_id, raider['level'],
                 raider['name'], raider['updatedAt']))
 
-            cur.execute('DELETE FROM gear WHERE owner_id = :tokenId', raider)
             periodic()
             for inv in raider['inventory']:
-                params = {'name': inv['item']['name'],
+                name_stats = [inv['item']['name']]
+                name_stats.extend((inv['item'].get('stats') or {}).get(i, 0)
+                                  for i in stats)
+                dedup_id = ensure_dedup_gear(cur, name_stats)
+                if raider_has_gear(cur, raider_id, dedup_id):
+                    periodic()
+                    continue
+                params = {'dedup_id': dedup_id,
                           'slot': inv['item']['slot'],
                           'equipped': bool(inv.get('equipped')),
-                          'owner_id': raider['tokenId'],
+                          'raider_id': raider_id,
                           'source': source}
-                params.update({s: 0 for s in stats})
-                if inv['item'].get('stats'):
-                    params.update(inv['item']['stats'])
-                cur.execute('''INSERT INTO gear (
-                    name, equipped, slot, owner_id, source,
-                    strength, intelligence, agility, wisdom, charm, luck)
-                    VALUES (:name, :equipped, :slot, :owner_id, :source,
-                    :strength, :intelligence, :agility, :wisdom, :charm, :luck
-                    )''', params)
+                cur.execute('''INSERT INTO gear_localid (
+                    dedup_id, equipped, slot, raider_id, source) VALUES (
+                    :dedup_id, :equipped, :slot, :raider_id, :source)''',
+                            params)
                 periodic()
+                found[raider_id] += 1
 
             params = {
-                'raider': raider['tokenId'],
+                'raider': raider_id,
                 'remaining': raider['raidsRemaining'],
                 'last_raid': iso_datetime_to_secs(raider['lastRaided']),
                 'last_endless': iso_datetime_to_secs(raider['lastEndless']),
@@ -252,9 +311,10 @@ def import_raider_gear(db, rid=None, periodic=noop):
             cur.execute('''INSERT OR REPLACE INTO raids (
                 raider, remaining, last_raid, last_endless) VALUES (
                 :raider, :remaining, :last_raid, :last_endless)''', params)
-            periodic()
-    db.commit()
     periodic()
+    db.commit()
+    periodic(message='Found %d new gear items for %d raiders' % (
+        sum(found.values()), len(found)))
 
 
 def import_raider_recruitment(db, idlist, periodic=noop):
@@ -354,6 +414,7 @@ def import_or_update(db, raider=None, gear=True, timing=True,
         import_one_raider(db, raider, periodic=periodic)
     if gear:
         import_raider_gear(db, raider, periodic=periodic)
+        migrate_old_gear(db, periodic=periodic)
     if timing:
         import_raider_recruitment(db, ids, periodic=periodic)
         import_raider_quests(db, ids, periodic=periodic)
