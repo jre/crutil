@@ -9,6 +9,7 @@ import json
 
 cr_conf = __import__('cr-conf')
 cf = cr_conf.conf
+cr_report = __import__('cr-report')
 
 
 def noop(*a, **kw):
@@ -206,7 +207,9 @@ def import_one_raider(db, rid, periodic=noop):
     periodic()
 
 
-def import_raiders(cur, all_ids, periodic=noop):
+def import_raiders(cur, all_ids, full=False, periodic=noop):
+    last_weekly = cr_report.last_weekly_refresh(
+        datetime.datetime.utcnow())
     periodic('Importing raider data from CR API')
 
     for first in range(0, len(all_ids), 100):
@@ -235,6 +238,14 @@ def import_raiders(cur, all_ids, periodic=noop):
                         params)
 
             periodic()
+            if not full:
+                cur.execute('''SELECT remaining, last_raid
+                    FROM raids WHERE raider = ?''', (data['id'],))
+                rows = tuple(cur.fetchall())
+                if len(rows):
+                    remaining, last_raid = rows[0]
+                    if last_raid > last_weekly.timestamp() and remaining == 0:
+                        continue
             import_raider_full(cur, data['id'])
         periodic(message='imported %d/%d' % (first + len(data_rows),
                                              len(all_ids)))
@@ -367,22 +378,39 @@ def import_raider_gear(db, rid=None, periodic=noop):
         sum(found.values()), len(found)))
 
 
-def import_raider_recruitment(db, idlist, periodic=noop):
+def import_raider_recruitment(db, idlist, full=False, periodic=noop):
     periodic('Importing recruitment data from chain',
              message='fetching contract ABI')
     cur = db.cursor()
     recruiting = cf.get_eth_contract('recruiting').functions
     for idx, rid in enumerate(sorted(idlist)):
         periodic(message='%d/%d - raider %d' % (idx, len(idlist), rid))
-        cost = recruiting.getRaiderRecruitCost(rid).call()
-        periodic()
+        cost, next_time = None, None
+        if not full:
+            cur.execute('SELECT next, cost FROM recruiting WHERE raider = ?',
+                        (rid,))
+            rows = cur.fetchall()
+            if len(rows):
+                cost, next_time = rows[0]
+        changed = False
+
+        if cost is None:
+            cost = recruiting.getRaiderRecruitCost(rid).call()
+            periodic()
+            changed = True
+
         utcnow = int(time.time())
-        # XXX does this return a negative number when a recruit is available?
-        delta = recruiting.nextRecruitTime(rid).call()
-        periodic()
-        cur.execute('''INSERT OR REPLACE INTO recruiting (
-            raider, next, cost) VALUES (?, ?, ?)''',
-                    (rid, utcnow + delta, cost))
+        if next_time is None or next_time < utcnow:
+            # XXX does this return a negative when a recruit is available?
+            delta = recruiting.nextRecruitTime(rid).call()
+            next_time = utcnow + delta
+            periodic()
+            changed = True
+
+        if changed:
+            cur.execute('''INSERT OR REPLACE INTO recruiting (
+                raider, next, cost) VALUES (?, ?, ?)''',
+                        (rid, next_time, cost))
     periodic(message='%d/%d - done' % (len(idlist), len(idlist)))
     db.commit()
     periodic()
