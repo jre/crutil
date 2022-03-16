@@ -516,7 +516,8 @@ def show_raider(db, rid):
     gear = list(report.fetch(db, rid))
     gear.sort(key=lambda v: v[0])
     print('%-*s  %s' % (
-        namelen, '', ' '.join('%7s' % i for i in report.columns)))
+        namelen, report.columns[0],
+        ' '.join('%7s' % i for i in report.columns[1:])))
     for row in gear:
         print('%-*s  %s' % (
             namelen, row[0], ' '.join(fmt_stat_diff(i, 7) for i in row[1:])))
