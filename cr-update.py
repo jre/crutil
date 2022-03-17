@@ -180,7 +180,7 @@ def import_all_raiders(db, periodic=noop):
 
     cur.execute('BEGIN TRANSACTION')
     ids = tuple(sorted(raiders))
-    import_raiders(cur, ids, periodic=periodic)
+    import_raiders(cur, ids, full=True, periodic=periodic)
     db.commit()
     periodic()
     return ids

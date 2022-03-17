@@ -602,7 +602,8 @@ def main():
 
     if args.update:
         cru = __import__('cr-update')
-        cru.import_or_update(db, raider=raider, periodic=cru.periodic_print)
+        cru.import_or_update(db, raider=raider, timing=False,
+                             periodic=cru.periodic_print)
 
     if args.cmd == 'gear':
         show_raider(db, raider)
