@@ -543,21 +543,23 @@ def fmt_base(text):
 
 
 def findraider(db, ident):
-    try:
-        return int(ident)
-    except ValueError:
-        cur = db.cursor()
-        cur.execute('SELECT id FROM raiders WHERE lower(name) = ?',
-                    (str(ident).lower(),))
-        row = cur.fetchall()
-        if len(row) > 0:
-            return row[0][0]
-
-
-def allraiders(db):
     cur = db.cursor()
-    cur.execute('SELECT id FROM raiders')
-    return [i[0] for i in cur.fetchall()]
+    if ident.lower() == 'all':
+        cur.execute('SELECT id FROM raiders ORDER BY id')
+        return tuple(i[0] for i in cur.fetchall())
+
+    ids = []
+    for raider in ' '.join(ident.split(',')).split():
+        try:
+            ids.append(int(ident))
+        except ValueError:
+            cur.execute('SELECT id FROM raiders WHERE lower(name) = ?',
+                        (str(raider).lower(),))
+            row = cur.fetchall()
+            if len(row) == 0:
+                raise ValueError('unknown raider %r' % (raider,))
+            ids.append(row[0][0])
+    return tuple(ids)
 
 
 class FightSimReport(TabularReport):
@@ -640,13 +642,26 @@ def call_fight_simulator(url, db, ids, mobs, count=1000):
 
 
 def main():
+    if not cf.load_config():
+        print('error: please run ./cr-conf.py to configure')
+        sys.exit(1)
+    db = sqlite3.connect(cf.db_path)
+
+    def raider(v):
+        i = findraider(db, v)
+        if len(i) != 1:
+            raise ValueError()
+
+    def raider_list(v):
+        return findraider(db, v)
+
     parser = argparse.ArgumentParser()
     parser.set_defaults(cmd='list', sort='')
     subparsers = parser.add_subparsers(dest='cmd')
 
     p_best = subparsers.add_parser('best',
                                    help='Calculate best gear for raider')
-    p_best.add_argument('raider', help='Raider name or id')
+    p_best.add_argument('raider', type=raider, help='Raider name or id')
     p_best.add_argument('-u', dest='update',
                         default=False, action='store_true',
                         help='Update raider data first')
@@ -656,7 +671,7 @@ def main():
 
     p_gear = subparsers.add_parser('gear',
                                    help="Show a raider's gear")
-    p_gear.add_argument('raider', help='Raider name or id')
+    p_gear.add_argument('raider', type=raider, help='Raider name or id')
     p_gear.add_argument('-u', dest='update',
                         default=False, action='store_true',
                         help='Update raider data first')
@@ -668,24 +683,17 @@ def main():
                         help='Sort order')
 
     p_sim = subparsers.add_parser('sim', help="Request fight simulations")
-    p_sim.add_argument('raider', help='Raider name or id')
+    p_sim.set_defaults(update=False)
+    p_sim.add_argument('raider', type=raider_list, help='Raider name or id')
     p_sim.add_argument('mob', choices=('all',) + FightSimReport.mobs,
-                       default='all', help='Mob name')
+                       nargs='+', default='all', help='Mob name')
     p_sim.add_argument('-s', dest='url', default='http://localhost:3000/',
                        help='fight-simulator-cli serve url')
-    p_sim.add_argument('-u', dest='update',
-                       default=False, action='store_true',
-                       help='Update raider data first')
     p_sim.add_argument('-c', dest='count',
                        type=int, default=1000,
                        help='Count of fights to simulate')
 
     args = parser.parse_args()
-
-    if not cf.load_config():
-        print('error: please run ./cr-conf.py to configure')
-        sys.exit(1)
-    db = sqlite3.connect(cf.db_path)
 
     sorting = tuple(i.strip().lower() for i in args.sort.split(',') if i)
 
@@ -693,34 +701,23 @@ def main():
         show_all_raiders(db, sorting=sorting)
         return
 
-    if args.raider == 'all' and args.cmd == 'sim':
-        raider = allraiders(db)
-    else:
-        raider = findraider(db, args.raider)
-        if raider is None:
-            print('No raider named "%s" found' % (args.raider,))
-            parser.print_usage()
-            sys.exit(1)
-
     if args.update:
         cru = __import__('cr-update')
-        cru.import_or_update(db, raider=raider, timing=False,
+        cru.import_or_update(db, raider=args.raider, timing=False,
                              periodic=cru.periodic_print)
 
     if args.cmd == 'gear':
-        show_raider(db, raider)
+        show_raider(db, args.raider[0])
     elif args.cmd == 'best':
-        calc_best_gear(db, raider, args.count)
+        calc_best_gear(db, args.raider[0], args.count)
     elif args.cmd == 'sim':
         url = args.url
         if ':' not in url and '/' not in url:
             url += ':3000'
         if '://' not in url:
             url = 'http://' + url
-        mobs = FightSimReport.mobs if args.mob == 'all' else (args.mob,)
-        if isinstance(raider, int):
-            raider = (raider,)
-        call_fight_simulator(url, db, raider, mobs, args.count)
+        mobs = FightSimReport.mobs if 'all' in args.mob else args.mob
+        call_fight_simulator(url, db, args.raider, mobs, args.count)
 
 
 if __name__ == '__main__':

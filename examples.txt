@@ -44,10 +44,17 @@ Simulate fights for a raider against all mobs:
 Simulate fights for all raider against a mob:
 ./cr-report.py sim all <mob-name>
 
+Simulate fights for Raider1 and Raider2 against robber normal and heroic:
+./cr-report.py sim Raider1,Raider2 robber robberHeroic
+
 
 Package fight-simulator-cli binaries:
 git clone https://gitlab.com/crypto-raider-tools/fight-simulator-cli
-cd fight-simulator-cli
+cd ~/fight-simulator-cli
 npm install
 npm run compile
 `npm bin`/pkg . --out-path `pwd`/mybin/ -t node16-linux-x64,node16-win-x64,node16-mac-x64
+
+Run from local checkout:
+printf '#!\ncd ~/fight-simulator-cli && exec node build/cli.js "$@"\n' > ~/crutil/fight-simulator-cli
+chmod a+x ~/crutil/fight-simulator-cli
