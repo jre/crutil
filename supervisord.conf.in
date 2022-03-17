@@ -4,9 +4,10 @@ command=../fight-simulator-cli serve
 [supervisord]
 
 [supervisorctl]
+serverurl=unix://${STATEDIR}/supervisor.sock
 
 [rpcinterface:supervisor]
 supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
 
 [unix_http_server]
-file=%(here)s/venv/supervisor.sock
+file=${STATEDIR}/supervisor.sock

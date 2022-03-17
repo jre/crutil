@@ -5,4 +5,8 @@ if [ ! -f fight-simulator-cli ]; then
     exit 1
 fi
 
-cd venv && ./bin/supervisord -c ../supervisord.conf
+script='import string, appdirs, sys; sys.stdout.write(string.Template(sys.stdin.read()).substitute({"STATEDIR": appdirs.user_data_dir("crutil")}))'
+rm -f venv/supervisord.conf
+./venv/bin/python -c "$script" < supervisord.conf.in > venv/supervisord.conf
+
+cd venv && ./bin/supervisord -c ./supervisord.conf

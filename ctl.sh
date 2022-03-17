@@ -1,3 +1,3 @@
 #!/bin/sh
 
-./venv/bin/supervisorctl -s "unix://`pwd`/venv/supervisor.sock" "$@"
+./venv/bin/supervisorctl -c venv/supervisord.conf "$@"
