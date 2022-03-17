@@ -116,30 +116,6 @@ def raider_has_gear(cur, raider_id, dedup_id):
         return rows[0][0]
 
 
-def migrate_old_gear(db, periodic=noop):
-    cur = db.cursor()
-    periodic(message='migrating gear to deduplicated tables')
-    cur.execute('''SELECT equipped, slot, owner_id, source,
-        name, strength, intelligence, agility, wisdom, charm, luck
-        FROM gear''')
-    rows = cur.fetchall()
-
-    count = 0
-    for row in rows:
-        periodic()
-        equip, slot, raider_id, source = row[:4]
-        name_stats = row[4:]
-        dedup_id = ensure_dedup_gear(cur, name_stats)
-        if raider_has_gear(cur, raider_id, dedup_id):
-            continue
-        cur.execute('''INSERT INTO gear_localid (equipped, slot, raider_id,
-            source, dedup_id) VALUES (?, ?, ?, ?, ?)''', (
-                equip, slot, raider_id, source, dedup_id))
-        count += 1
-    periodic(message='migrated %d gear items' % (count,))
-    db.commit()
-
-
 def get_owned_raider_nfts(periodic=noop):
     all_nfts = []
     for owner in cf.nft_owners():
@@ -504,7 +480,6 @@ def import_or_update(db, raider=None, gear=True, timing=True,
         import_one_raider(db, raider, periodic=periodic)
     if gear:
         import_raider_gear(db, raider, periodic=periodic)
-        migrate_old_gear(db, periodic=periodic)
     if timing:
         import_raider_recruitment(db, ids, periodic=periodic)
         import_raider_quests(db, ids, periodic=periodic)
