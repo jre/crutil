@@ -382,7 +382,7 @@ def import_raider_recruitment(db, idlist, full=False, periodic=noop):
                 next_time, cost = rows[0]
         changed = False
 
-        if cost is None:
+        if cost is None or cost > 1000000000:
             cost = recruiting.getRaiderRecruitCost(rid).call()
             periodic()
             changed = True
