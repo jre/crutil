@@ -7,6 +7,9 @@ git pull
 Initial setup:
 ./setup.sh
 
+Start fight-simulator-cli server in the background, once per boot only:
+./start-services.sh
+
 Create or update database:
 ./cr-update.py
 
