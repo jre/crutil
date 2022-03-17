@@ -31,3 +31,12 @@ note: you must reload the raiders page first!
 
 If you want to see more gear combos, use -c with a count:
 ./cr-report.py best <raider-id> -c 10
+
+Simulate fight (requires fight-simulator-cli server)
+./cr-report.py sim <raider-id> <mob-name>
+
+Simulate fights for a raider against all mobs:
+./cr-report.py sim <raider-id> all
+
+Simulate fights for all raider against a mob:
+./cr-report.py sim all <mob-name>

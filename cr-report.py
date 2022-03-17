@@ -6,6 +6,7 @@ import sys
 import datetime
 import operator
 import functools
+import requests
 
 cr_conf = __import__('cr-conf')
 cf = cr_conf.conf
@@ -267,7 +268,7 @@ def get_raider_slots(cur, rid):
         FROM raiders WHERE id = ?''', (rid,))
     rows = tuple(cur.fetchall())
     if len(rows) == 0:
-        return
+        return None, None
     r_level = rows[0][0]
     r_name = rows[0][1]
     r_stats = rows[0][2:]
@@ -553,6 +554,91 @@ def findraider(db, ident):
             return row[0][0]
 
 
+def allraiders(db):
+    cur = db.cursor()
+    cur.execute('SELECT id FROM raiders')
+    return [i[0] for i in cur.fetchall()]
+
+
+class FightSimReport(TabularReport):
+    mobs = ('hogger', 'hoggerHeroic', 'faune', 'fauneHeroic',
+            'rat', 'ratHeroic', 'krok', 'krokHeroic',
+            'olgoNormal', 'olgoHeroic', 'cauldronNormal', 'cauldronHeroic',
+            'robber', 'robberHeroic')
+
+    def __init__(self, url):
+        super().__init__((
+            ('raider', 'Raider', 'str', False),
+            ('mob', 'Mob', 'str', False),
+            ('win', 'Win %', 'percent', True),
+            ('raiderdam', 'Radr Damg', 'float_1', True),
+            ('raiderlife', 'Radr Life', 'float_1', True),
+            ('mobdam', 'Mob Damg', 'float_1', True),
+            ('moblife', 'Mob Life', 'float_1', True)))
+        self.url = url.rstrip('/') + '/mfight'
+
+    def rune_name(self, name):
+        tail = ' - Spell Rune'
+        assert name.endswith(tail), (name, tail)
+        return name[:-len(tail)]
+
+    def fetch(self, db, raider_id, mob_name, count):
+        stat_names = ('strength', 'intelligence', 'agility',
+                      'wisdom', 'charm', 'luck')
+        cur = db.cursor()
+        names, stats = get_raider_slots(cur, raider_id)
+        assert stats is not None
+
+        total_stats = dict(zip(stat_names, map(sum, zip(*stats.values()))))
+
+        params = {'simCount': count,
+                  'fighterA': {'level': names[None][0], 'stats': total_stats},
+                  'fighterB': {'id': mob_name}}
+        if 'knickknack' in names:
+            params['fighterA']['knickknack'] = {
+                'name': self.rune_name(names['knickknack'])}
+        r = requests.post(self.url, json=params)
+        data = r.json()
+
+        sim_count = data['fighterAWinCount'] + data['fighterBWinCount']
+        if sim_count == 0:
+            return
+        win_rate = data['fighterAWinCount'] / sim_count * 100
+        return ('[%d] %s' % names[None], mob_name, win_rate,
+                data['fighterAAverage']['damagePerSim'],
+                data['fighterAAverage']['remainingLife'],
+                data['fighterBAverage']['damagePerSim'],
+                data['fighterBAverage']['remainingLife'])
+
+
+def call_fight_simulator(url, db, ids, mobs, count=1000):
+    report = FightSimReport(url)
+    fmt = {
+        'str': str,
+        'percent': lambda v: '%.0f%%' % (v,),
+        'float_1': lambda v: '%.1f' % (v,),
+    }
+
+    curs = db.cursor()
+    curs.execute('SELECT MAX(LENGTH(name)) FROM raiders')
+    namelen = curs.fetchone()[0]
+    moblen = max(map(len, report.mobs))
+
+    widths = [len(i) for i in report.labels]
+    widths[0] = max(widths[0], namelen + 4)
+    widths[1] = max(widths[1], moblen)
+    print(' '.join(('%*s' if report.right_align[i] else '%-*s') % (
+        widths[i], report.labels[i])
+                   for i in range(report.colcount)))
+    for rid in ids:
+        for mob_name in mobs:
+            row = report.fetch(db, rid, mob_name, count)
+            str_row = [fmt[report.coltypes[i]](v) for i, v in enumerate(row)]
+            print(' '.join(('%*s' if report.right_align[i] else '%-*s') % (
+                widths[i], str_row[i])
+                           for i in range(report.colcount)))
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.set_defaults(cmd='list', sort='')
@@ -581,6 +667,19 @@ def main():
     p_list.add_argument('-s', dest='sort', default='',
                         help='Sort order')
 
+    p_sim = subparsers.add_parser('sim', help="Request fight simulations")
+    p_sim.add_argument('raider', help='Raider name or id')
+    p_sim.add_argument('mob', choices=('all',) + FightSimReport.mobs,
+                       default='all', help='Mob name')
+    p_sim.add_argument('-s', dest='url', default='http://localhost:3000/',
+                       help='fight-simulator-cli serve url')
+    p_sim.add_argument('-u', dest='update',
+                       default=False, action='store_true',
+                       help='Update raider data first')
+    p_sim.add_argument('-c', dest='count',
+                       type=int, default=1000,
+                       help='Count of fights to simulate')
+
     args = parser.parse_args()
 
     if not cf.load_config():
@@ -594,11 +693,14 @@ def main():
         show_all_raiders(db, sorting=sorting)
         return
 
-    raider = findraider(db, args.raider)
-    if raider is None:
-        print('No raider named "%s" found' % (args.raider,))
-        parser.print_usage()
-        sys.exit(1)
+    if args.raider == 'all' and args.cmd == 'sim':
+        raider = allraiders(db)
+    else:
+        raider = findraider(db, args.raider)
+        if raider is None:
+            print('No raider named "%s" found' % (args.raider,))
+            parser.print_usage()
+            sys.exit(1)
 
     if args.update:
         cru = __import__('cr-update')
@@ -609,6 +711,16 @@ def main():
         show_raider(db, raider)
     elif args.cmd == 'best':
         calc_best_gear(db, raider, args.count)
+    elif args.cmd == 'sim':
+        url = args.url
+        if ':' not in url and '/' not in url:
+            url += ':3000'
+        if '://' not in url:
+            url = 'http://' + url
+        mobs = FightSimReport.mobs if args.mob == 'all' else (args.mob,)
+        if isinstance(raider, int):
+            raider = (raider,)
+        call_fight_simulator(url, db, raider, mobs, args.count)
 
 
 if __name__ == '__main__':
