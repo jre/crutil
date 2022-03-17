@@ -379,7 +379,7 @@ def import_raider_recruitment(db, idlist, full=False, periodic=noop):
                         (rid,))
             rows = cur.fetchall()
             if len(rows):
-                cost, next_time = rows[0]
+                next_time, cost = rows[0]
         changed = False
 
         if cost is None:
