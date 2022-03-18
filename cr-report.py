@@ -568,12 +568,14 @@ def findraider(db, ident):
     cur = db.cursor()
     if ident.lower() == 'all':
         cur.execute('SELECT id FROM raiders ORDER BY id')
-        return tuple(i[0] for i in cur.fetchall())
+        return tuple(i[0] for i in cur.fetchall()), True
 
+    trusted = True
     ids = []
     for raider in ' '.join(ident.split(',')).split():
         try:
             ids.append(int(ident))
+            trusted = False
         except ValueError:
             cur.execute('SELECT id FROM raiders WHERE lower(name) = ?',
                         (str(raider).lower(),))
@@ -581,7 +583,7 @@ def findraider(db, ident):
             if len(row) == 0:
                 raise ValueError('unknown raider %r' % (raider,))
             ids.append(row[0][0])
-    return tuple(ids)
+    return tuple(ids), trusted
 
 
 class FightSimReport(TabularReport):
@@ -683,13 +685,14 @@ def main():
     db = sqlite3.connect(cf.db_path)
 
     def raider(v):
-        ids = findraider(db, v)
+        ids, trusted = findraider(db, v)
         if len(ids) != 1:
             raise ValueError()
-        return ids
+        return ids, trusted
 
     def raider_list(v):
-        return findraider(db, v)
+        ids, trusted = findraider(db, v)
+        return ids, trusted
 
     def mob_name(v):
         if v == 'all':
@@ -751,25 +754,34 @@ def main():
         show_all_raiders(db, sorting=sorting)
         return
 
+    rids, rids_trusted = args.raider
     if args.update:
         cru = __import__('cr-update')
-        cru.import_or_update(db, raider=args.raider, timing=False,
+        if not rids_trusted:
+            owned = cru.get_owned_raider_id_set(periodic=cru.periodic_print)
+            bad = set(rids) - owned
+            if bad:
+                print('raider(s) %s not owned by %s' % (
+                    ' '.join(map(str, sorted(bad))),
+                    ' '.join(cf.nft_owners())))
+                sys.exit(1)
+        cru.import_or_update(db, raider=rids, timing=False,
                              periodic=cru.periodic_print)
 
     if 'mob' in args and 'all' in args.mob:
         args.mob = FightSimReport.mobs
 
     if args.cmd == 'gear':
-        show_raider(db, args.raider[0])
+        show_raider(db, rids[0])
     elif args.cmd == 'best':
-        calc_best_gear(db, args.raider[0], args.count, args.url, args.mob)
+        calc_best_gear(db, rids[0], args.count, args.url, args.mob)
     elif args.cmd == 'sim':
         url = args.url
         if ':' not in url and '/' not in url:
             url += ':3000'
         if '://' not in url:
             url = 'http://' + url
-        call_fight_simulator(url, db, args.raider, args.mob, args.count)
+        call_fight_simulator(url, db, rids, args.mob, args.count)
 
 
 if __name__ == '__main__':

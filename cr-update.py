@@ -156,16 +156,18 @@ def get_questing_raider_ids(periodic=noop):
     return ids
 
 
-def import_all_raiders(db, periodic=noop):
-    def rlist(r):
-        return ' '.join(sorted(map(str, r)))
+def get_owned_raider_id_set(periodic=noop):
     periodic('Counting raiders', 'counting owned raider NFTs on chain')
     raiders = set(lookup_nft_raider_id(i)
                   for i in get_owned_raider_nfts(periodic=periodic))
     periodic(message='counting questing raider NFTs on chain')
-    questy = get_questing_raider_ids()
-    raiders.update(questy)
+    raiders.update(get_questing_raider_ids(periodic=periodic))
     periodic(message='found %d raiders total' % len(raiders))
+    return set(raiders)
+
+
+def import_all_raiders(db, periodic=noop):
+    raiders = get_owned_raider_id_set(periodic=periodic)
 
     cur = db.cursor()
     cur.execute('SELECT id FROM raiders')
@@ -174,7 +176,7 @@ def import_all_raiders(db, periodic=noop):
         # XXX can the owner method show if we have sold the raider
         # or maybe raiderInfo.raidersOwnedBy
         print('Warning: skipping %d unknown raiders: %s' % (
-            len(skipped), rlist(skipped)))
+            len(skipped), ' '.join(sorted(map(str, skipped)))))
 
     periodic()
 
@@ -459,14 +461,15 @@ def import_raider_quests(db, idlist, periodic=noop):
 
 def findraider(db, ident):
     try:
-        return int(ident)
+        return int(ident), False
     except ValueError:
         cur = db.cursor()
         cur.execute('SELECT id FROM raiders WHERE lower(name) = ?',
                     (str(ident).lower(),))
         row = cur.fetchall()
         if len(row) > 0:
-            return row[0][0]
+            return row[0][0], True
+    return None, False
 
 
 def import_or_update(db, raider=None, gear=True, timing=True,
@@ -506,11 +509,17 @@ def main():
 
     raider = None
     if args.raider is not None:
-        raider = findraider(db, args.raider)
+        raider, trusted = findraider(db, args.raider)
         if raider is None:
             print('No raider named "%s" found' % (args.raider,))
             parser.print_usage()
             sys.exit(1)
+        elif not trusted:
+            owned = get_owned_raider_id_set(periodic=periodic_print)
+            if raider not in owned:
+                print('raider %d not owned by %s' % (
+                    raider, ' '.join(cf.nft_owners())))
+                sys.exit(1)
 
     import_or_update(db, raider=raider, gear=args.gear, timing=args.times,
                      periodic=periodic_print)
