@@ -10,6 +10,9 @@ Initial setup:
 Start fight-simulator-cli server in the background, once per boot only:
 ./start-services.sh
 
+Check if simulator is running:
+./ctl.sh status
+
 Create or update database:
 ./cr-update.py
 
@@ -34,6 +37,9 @@ note: you must reload the raiders page first!
 
 If you want to see more gear combos, use -c with a count:
 ./cr-report.py best <raider-id> -c 10
+
+Additionally, mob names can be listed to show simulation results for the mobs:
+./cr-report.py best <raider-id> olgoHeroic robber robberHeroic
 
 Simulate fight (requires fight-simulator-cli server)
 ./cr-report.py sim <raider-id> <mob-name>

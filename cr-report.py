@@ -262,17 +262,18 @@ def show_all_raiders(db, sorting=()):
                        for i in range(report.colcount)))
 
 
-def get_raider_slots(cur, rid):
+def get_raider_info(cur, rid):
     cur.execute('''SELECT level, name,
         strength, intelligence, agility, wisdom, charm, luck
         FROM raiders WHERE id = ?''', (rid,))
     rows = tuple(cur.fetchall())
     if len(rows) == 0:
         return None, None
-    r_level = rows[0][0]
-    r_name = rows[0][1]
-    r_stats = rows[0][2:]
+    return (rows[0][0], rows[0][1], rows[0][2:])
 
+
+def get_raider_slots(cur, rid):
+    r_level, r_name, r_stats = get_raider_info(cur, rid)
     names = {None: (r_level, r_name)}
     stats = {None: r_stats}
     cur.execute('''SELECT l.slot, u.name,
@@ -389,8 +390,10 @@ class RaiderComboReport(TabularReport):
         return set(equipped.values()), combos
 
 
-def calc_best_gear(db, rid, count):
+def calc_best_gear(db, rid, count, url, mobs):
+    mobs = tuple(mobs)
     report = RaiderComboReport()
+    sim = FightSimReport(url)
     cur = db.cursor()
     slot_names, slot_stats = get_raider_slots(cur, rid)
     lvl = slot_names[None][0]
@@ -410,9 +413,10 @@ def calc_best_gear(db, rid, count):
 
     def fmtstats(s):
         return ' '.join('%7d' % i for i in s)
-
-    print('%-*s  %s' % (namelen, report.columns[0],
-                        fmt_hdr(report.columns[1:], 7)))
+    moblen = max(map(len, mobs + ('100%',)))
+    print('%-*s  %s  %s' % (namelen, report.columns[0],
+                            fmt_hdr(report.columns[1:], 7),
+                            ' '.join('%*s' % (moblen, m) for m in mobs)))
     cur_stats_line = cur_eff_stats + cur_der_stats + (sum(cur_der_stats),)
     print(fmt_base('%-*s  %s\n' * 5) % (
         namelen, id_lvl_name, fmtstats(slot_stats[None]),
@@ -422,9 +426,11 @@ def calc_best_gear(db, rid, count):
         namelen, '', fmtstats(cur_stats_line)))
     for combo_row, diff_row, weap_row, dress_row, ring_row in combos[:count]:
         cur_equipment = True
+        gear_combo = {}
         for slot, row in (('main_hand', weap_row),
                           ('dress', dress_row),
                           ('finger', ring_row)):
+            gear_combo[slot] = row
             stats = '%-*s  %s' % (
                 namelen, row[0], fmtstats(row[1:]))
             if slot_names[slot] == row[0] and \
@@ -433,14 +439,20 @@ def calc_best_gear(db, rid, count):
             else:
                 cur_equipment = False
                 print(stats)
+
+        rune = slot_names.get('knickknack')
+        wins = ' '.join(fmt_percentage(sim.fetch_custom_gear(
+            cur, rid, gear_combo, m, knickknack=rune)[2], moblen)
+                        for m in mobs)
+
         if cur_equipment:
-            print('%-*s  %s\n' % (namelen, '',
-                                  fmt_base(fmtstats(combo_row[1:]))))
+            print('%-*s  %s  %s\n' % (
+                namelen, '', fmt_base(fmtstats(combo_row[1:])), wins))
         else:
-            print('%-*s  %s\n%-*s  %s\n' % (
+            print('%-*s  %s\n%-*s  %s  %s\n' % (
                 namelen, '', fmtstats(combo_row[1:]),
                 namelen, '', ' '.join(fmt_stat_diff(i, 7)
-                                      for i in diff_row[1:])))
+                                      for i in diff_row[1:]), wins))
 
 
 class RaiderGearReport(TabularReport):
@@ -534,6 +546,16 @@ def fmt_stat_diff(stat, width):
     return '\033[0;%dm%s\033[0m' % (color, '%+*.2f' % (width, stat))
 
 
+def fmt_percentage(num, width=0):
+    if num > 95:
+        color = 36  # cyan
+    elif num > 70:
+        color = 33  # yellow
+    else:
+        color = 35  # magenta
+    return '\033[0;%dm%*.0f%%\033[0m' % (color, width, num)
+
+
 def fmt_hdr(names, width):
     return '\033[0;1m%s\033[0m' % ' '.join('%*s' % (width, i) for i in names)
 
@@ -567,6 +589,8 @@ class FightSimReport(TabularReport):
             'rat', 'ratHeroic', 'krok', 'krokHeroic',
             'olgoNormal', 'olgoHeroic', 'cauldronNormal', 'cauldronHeroic',
             'robber', 'robberHeroic')
+    stat_names = ('strength', 'intelligence', 'agility',
+                  'wisdom', 'charm', 'luck')
 
     def __init__(self, url):
         super().__init__((
@@ -584,21 +608,32 @@ class FightSimReport(TabularReport):
         assert name.endswith(tail), (name, tail)
         return name[:-len(tail)]
 
-    def fetch(self, db, raider_id, mob_name, count):
-        stat_names = ('strength', 'intelligence', 'agility',
-                      'wisdom', 'charm', 'luck')
-        cur = db.cursor()
+    def fetch_custom_gear(self, cur, raider_id, gear, mob_name,
+                          knickknack=None, count=1000):
+        level, name, base_stats = get_raider_info(cur, raider_id)
+        allstats = (base_stats,) + tuple(g[1:] for g in gear.values())
+        combostats = tuple(map(sum, zip(*allstats)))
+        return self.fetch_raw(level, name, combostats, mob_name,
+                              knickknack=knickknack, count=count)
+
+    def fetch_one(self, cur, raider_id, mob_name, count=1000):
         names, stats = get_raider_slots(cur, raider_id)
         assert stats is not None
+        rune = names.get('knickknack')
+        rlevel, rname = names[None]
+        rstats = tuple(map(sum, zip(*stats.values())))
 
-        total_stats = dict(zip(stat_names, map(sum, zip(*stats.values()))))
+        return self.fetch_raw(rlevel, rname, rstats, mob_name,
+                              knickknack=rune, count=count)
 
+    def fetch_raw(self, level, name, stats, mob_name, knickknack, count):
+        stats_map = dict(zip(self.stat_names, stats))
         params = {'simCount': count,
-                  'fighterA': {'level': names[None][0], 'stats': total_stats},
+                  'fighterA': {'level': level, 'stats': stats_map},
                   'fighterB': {'id': mob_name}}
-        if 'knickknack' in names:
+        if knickknack is not None:
             params['fighterA']['knickknack'] = {
-                'name': self.rune_name(names['knickknack'])}
+                'name': self.rune_name(knickknack)}
         r = requests.post(self.url, json=params)
         data = r.json()
 
@@ -606,7 +641,7 @@ class FightSimReport(TabularReport):
         if sim_count == 0:
             return
         win_rate = data['fighterAWinCount'] / sim_count * 100
-        return ('[%d] %s' % names[None], mob_name, win_rate,
+        return ('[%d] %s' % (level, name), mob_name, win_rate,
                 data['fighterAAverage']['damagePerSim'],
                 data['fighterAAverage']['remainingLife'],
                 data['fighterBAverage']['damagePerSim'],
@@ -617,7 +652,7 @@ def call_fight_simulator(url, db, ids, mobs, count=1000):
     report = FightSimReport(url)
     fmt = {
         'str': str,
-        'percent': lambda v: '%.0f%%' % (v,),
+        'percent': lambda v: fmt_percentage(v, 4),
         'float_1': lambda v: '%.1f' % (v,),
     }
 
@@ -634,7 +669,7 @@ def call_fight_simulator(url, db, ids, mobs, count=1000):
                    for i in range(report.colcount)))
     for rid in ids:
         for mob_name in mobs:
-            row = report.fetch(db, rid, mob_name, count)
+            row = report.fetch_one(curs, rid, mob_name, count)
             str_row = [fmt[report.coltypes[i]](v) for i, v in enumerate(row)]
             print(' '.join(('%*s' if report.right_align[i] else '%-*s') % (
                 widths[i], str_row[i])
@@ -648,12 +683,23 @@ def main():
     db = sqlite3.connect(cf.db_path)
 
     def raider(v):
-        i = findraider(db, v)
-        if len(i) != 1:
+        ids = findraider(db, v)
+        if len(ids) != 1:
             raise ValueError()
+        return ids
 
     def raider_list(v):
         return findraider(db, v)
+
+    def mob_name(v):
+        if v == 'all':
+            return 'all'
+        if v not in FightSimReport.mobs:
+            raise ValueError()
+        return v
+
+    def optional_mob_name(v):
+        return mob_name(v) if v else None
 
     parser = argparse.ArgumentParser()
     parser.set_defaults(cmd='list', sort='')
@@ -662,11 +708,15 @@ def main():
     p_best = subparsers.add_parser('best',
                                    help='Calculate best gear for raider')
     p_best.add_argument('raider', type=raider, help='Raider name or id')
+    p_best.add_argument('mob', type=optional_mob_name, nargs='*',
+                        help='Mob name')
     p_best.add_argument('-u', dest='update',
                         default=False, action='store_true',
                         help='Update raider data first')
     p_best.add_argument('-c', dest='count', type=int, default=5,
                         help='Number of combinations to display')
+    p_best.add_argument('-s', dest='url', default='http://localhost:3000/',
+                        help='fight-simulator-cli serve url')
     # XXX add -s option for best
 
     p_gear = subparsers.add_parser('gear',
@@ -685,8 +735,8 @@ def main():
     p_sim = subparsers.add_parser('sim', help="Request fight simulations")
     p_sim.set_defaults(update=False)
     p_sim.add_argument('raider', type=raider_list, help='Raider name or id')
-    p_sim.add_argument('mob', choices=('all',) + FightSimReport.mobs,
-                       nargs='+', default='all', help='Mob name')
+    p_sim.add_argument('mob', type=mob_name, nargs='*', default='all',
+                       help='Mob name')
     p_sim.add_argument('-s', dest='url', default='http://localhost:3000/',
                        help='fight-simulator-cli serve url')
     p_sim.add_argument('-c', dest='count',
@@ -706,18 +756,20 @@ def main():
         cru.import_or_update(db, raider=args.raider, timing=False,
                              periodic=cru.periodic_print)
 
+    if 'mob' in args and 'all' in args.mob:
+        args.mob = FightSimReport.mobs
+
     if args.cmd == 'gear':
         show_raider(db, args.raider[0])
     elif args.cmd == 'best':
-        calc_best_gear(db, args.raider[0], args.count)
+        calc_best_gear(db, args.raider[0], args.count, args.url, args.mob)
     elif args.cmd == 'sim':
         url = args.url
         if ':' not in url and '/' not in url:
             url += ':3000'
         if '://' not in url:
             url = 'http://' + url
-        mobs = FightSimReport.mobs if 'all' in args.mob else args.mob
-        call_fight_simulator(url, db, args.raider, mobs, args.count)
+        call_fight_simulator(url, db, args.raider, args.mob, args.count)
 
 
 if __name__ == '__main__':
