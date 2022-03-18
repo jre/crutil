@@ -765,8 +765,9 @@ def main():
                     ' '.join(map(str, sorted(bad))),
                     ' '.join(cf.nft_owners())))
                 sys.exit(1)
-        cru.import_or_update(db, raider=rids, timing=False,
-                             periodic=cru.periodic_print)
+        for rid in rids:
+            cru.import_or_update(db, raider=rid, timing=False,
+                                 periodic=cru.periodic_print)
 
     if 'mob' in args and 'all' in args.mob:
         args.mob = FightSimReport.mobs
