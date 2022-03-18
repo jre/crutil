@@ -418,12 +418,14 @@ def calc_best_gear(db, rid, count, url, mobs):
                             fmt_hdr(report.columns[1:], 7),
                             ' '.join('%*s' % (moblen, m) for m in mobs)))
     cur_stats_line = cur_eff_stats + cur_der_stats + (sum(cur_der_stats),)
-    print(fmt_base('%-*s  %s\n' * 5) % (
+    wins = ' '.join(fmt_percentage(sim.fetch_one(cur, rid, m)[2], moblen)
+                    for m in mobs)
+    print(fmt_base('%-*s  %s\n%-*s  %s\n%-*s  %s\n%-*s  %s\n%-*s  %s  %s\n' % (
         namelen, id_lvl_name, fmtstats(slot_stats[None]),
         namelen, slot_names['main_hand'], fmtstats(slot_stats['main_hand']),
         namelen, slot_names['dress'], fmtstats(slot_stats['dress']),
         namelen, slot_names['finger'], fmtstats(slot_stats['finger']),
-        namelen, '', fmtstats(cur_stats_line)))
+        namelen, '', fmtstats(cur_stats_line), wins)))
     for combo_row, diff_row, weap_row, dress_row, ring_row in combos[:count]:
         cur_equipment = True
         gear_combo = {}
@@ -449,10 +451,10 @@ def calc_best_gear(db, rid, count, url, mobs):
             print('%-*s  %s  %s\n' % (
                 namelen, '', fmt_base(fmtstats(combo_row[1:])), wins))
         else:
-            print('%-*s  %s\n%-*s  %s  %s\n' % (
-                namelen, '', fmtstats(combo_row[1:]),
+            print('%-*s  %s  %s\n%-*s  %s\n' % (
+                namelen, '', fmtstats(combo_row[1:]), wins,
                 namelen, '', ' '.join(fmt_stat_diff(i, 7)
-                                      for i in diff_row[1:]), wins))
+                                      for i in diff_row[1:])))
 
 
 class RaiderGearReport(TabularReport):
