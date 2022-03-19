@@ -416,7 +416,7 @@ def calc_best_gear(db, rid, count, url, mobs):
     moblen = max(map(len, mobs + ('100%',)))
     print('%-*s  %s  %s' % (namelen, report.columns[0],
                             fmt_hdr(report.columns[1:], 7),
-                            ' '.join('%*s' % (moblen, m) for m in mobs)))
+                            ' '.join(' %*s' % (moblen, m) for m in mobs)))
     cur_stats_line = cur_eff_stats + cur_der_stats + (sum(cur_der_stats),)
     wins = ' '.join(fmt_percentage(sim.fetch_one(cur, rid, m)[2], moblen)
                     for m in mobs)
