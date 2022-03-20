@@ -414,7 +414,8 @@ def calc_best_gear(db, rid, count, url, mobs):
                             fmt_hdr(report.columns[1:], 7),
                             ' '.join(' %*s' % (moblen, m) for m in mobs)))
     cur_stats_line = cur_eff_stats + cur_der_stats + (sum(cur_der_stats),)
-    wins = ' '.join(fmt_percentage(sim.fetch_one(cur, rid, m)[2], moblen)
+    wins = ' '.join(fmt_percentage(sim.fetch_one(cur, rid, m)[2],
+                                   moblen, bold=True)
                     for m in mobs)
     print(fmt_base('%-*s  %s\n%-*s  %s\n%-*s  %s\n%-*s  %s\n%-*s  %s  %s\n' % (
         namelen, id_lvl_name, fmtstats(slot_stats[None]),
@@ -444,7 +445,8 @@ def calc_best_gear(db, rid, count, url, mobs):
 
         rune = slot_names.get('knickknack')
         wins = ' '.join(fmt_percentage(sim.fetch_custom_gear(
-            cur, rid, gear_combo, m, knickknack=rune)[2], moblen)
+            cur, rid, gear_combo, m, knickknack=rune)[2],
+                                       moblen, bold=cur_equipment)
                         for m in mobs)
 
         if cur_equipment:
@@ -548,14 +550,15 @@ def fmt_stat_diff(stat, width):
     return '\033[0;%dm%s\033[0m' % (color, '%+*.2f' % (width, stat))
 
 
-def fmt_percentage(num, width=0):
+def fmt_percentage(num, width=0, bold=False):
     if num > 95:
         color = 36  # cyan
     elif num > 70:
         color = 33  # yellow
     else:
         color = 35  # magenta
-    return '\033[0;%dm%*.0f%%\033[0m' % (color, width, num)
+    boldstr = ';1' if bold else ''
+    return '\033[0%s;%dm%*.0f%%\033[0m' % (boldstr, color, width, num)
 
 
 def fmt_hdr(names, width):
