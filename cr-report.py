@@ -418,10 +418,14 @@ def calc_best_gear(db, rid, count, url, mobs):
                     for m in mobs)
     print(fmt_base('%-*s  %s\n%-*s  %s\n%-*s  %s\n%-*s  %s\n%-*s  %s  %s\n' % (
         namelen, id_lvl_name, fmtstats(slot_stats[None]),
-        namelen, slot_names['main_hand'], fmtstats(slot_stats['main_hand']),
-        namelen, slot_names['dress'], fmtstats(slot_stats['dress']),
-        namelen, slot_names['finger'], fmtstats(slot_stats['finger']),
+        namelen, slot_names.get('main_hand', 'nothing'),
+        fmtstats(slot_stats.get('main_hand', (0,) * 6)),
+        namelen, slot_names.get('dress', 'nothing'),
+        fmtstats(slot_stats.get('dress', (0,) * 6)),
+        namelen, slot_names.get('finger', 'nothing'),
+        fmtstats(slot_stats.get('finger', (0,) * 6)),
         namelen, '', fmtstats(cur_stats_line), wins)))
+
     for combo_row, diff_row, weap_row, dress_row, ring_row in combos[:count]:
         cur_equipment = True
         gear_combo = {}
@@ -431,7 +435,7 @@ def calc_best_gear(db, rid, count, url, mobs):
             gear_combo[slot] = row
             stats = '%-*s  %s' % (
                 namelen, row[0], fmtstats(row[1:]))
-            if slot_names[slot] == row[0] and \
+            if slot in slot_names and slot_names[slot] == row[0] and \
                slot_stats[slot] == row[1:]:
                 print(fmt_base(stats))
             else:
