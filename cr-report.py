@@ -756,8 +756,8 @@ def main():
     if args.update:
         cru = __import__('cr-update')
         if not rids_trusted:
-            owned = cru.get_owned_raider_id_set(periodic=cru.periodic_print)
-            bad = set(rids) - owned
+            owned, questing = cru.get_raider_ids(periodic=cru.periodic_print)
+            bad = set(rids) - owned - questing
             if bad:
                 print('raider(s) %s not owned by %s' % (
                     ' '.join(map(str, sorted(bad))),

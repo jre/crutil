@@ -155,18 +155,20 @@ def get_questing_raider_ids(periodic=noop):
     return ids
 
 
-def get_owned_raider_id_set(periodic=noop):
+def get_raider_ids(periodic=noop):
     periodic('Counting raiders', 'counting owned raider NFTs on chain')
-    raiders = set(lookup_nft_raider_id(i)
-                  for i in get_owned_raider_nfts(periodic=periodic))
+    owned = set(lookup_nft_raider_id(i)
+                for i in get_owned_raider_nfts(periodic=periodic))
     periodic(message='counting questing raider NFTs on chain')
-    raiders.update(get_questing_raider_ids(periodic=periodic))
-    periodic(message='found %d raiders total' % len(raiders))
-    return set(raiders)
+    questing = set(get_questing_raider_ids(periodic=periodic))
+    periodic(message='found %d raiders total' % (len(owned) + len(questing)))
+    return owned, questing
 
 
 def import_all_raiders(db, periodic=noop):
-    raiders = get_owned_raider_id_set(periodic=periodic)
+    owned, questing = get_raider_ids(periodic=periodic)
+    raiders = set(owned)
+    raiders.update(questing)
 
     cur = db.cursor()
     cur.execute('SELECT id FROM raiders')
@@ -181,7 +183,7 @@ def import_all_raiders(db, periodic=noop):
 
     cur.execute('BEGIN TRANSACTION')
     ids = tuple(sorted(raiders))
-    import_raiders(cur, ids, full=True, periodic=periodic)
+    import_raiders(cur, ids, full=owned, periodic=periodic)
     db.commit()
     periodic()
     return ids
@@ -227,7 +229,7 @@ def import_raiders(cur, all_ids, full=False, periodic=noop):
                         params)
 
             periodic()
-            if not full:
+            if not full or (isinstance(full, set) and data['id'] not in full):
                 cur.execute('''SELECT remaining, last_raid
                     FROM raids WHERE raider = ?''', (data['id'],))
                 rows = tuple(cur.fetchall())
@@ -516,8 +518,8 @@ def main():
             parser.print_usage()
             sys.exit(1)
         elif not trusted:
-            owned = get_owned_raider_id_set(periodic=periodic_print)
-            if raider not in owned:
+            owned, questing = get_raider_ids(periodic=periodic_print)
+            if raider not in owned and raider not in questing:
                 print('raider %d not owned by %s' % (
                     raider, ' '.join(cf.nft_owners())))
                 sys.exit(1)
