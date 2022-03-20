@@ -10,7 +10,7 @@ case "$uname_sp" in
         export ARCHFLAGS='-arch x86_64'
         ;;
     OpenBSD\ *)
-        test -d venv || virtualenv --system-site-packages venv
+        test -d venv || python3 -m venv --system-site-packages venv
         ;;
 esac
 
