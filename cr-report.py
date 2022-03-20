@@ -174,10 +174,6 @@ def fmt_positive_count(count):
     return '?' if count < 0 else str(count)
 
 
-def fmt_positive_secs(secs):
-    return 'now' if secs == 0 else str(datetime.datetime.fromtimestamp(secs))
-
-
 class TabularReport():
     def __init__(self, colspec):
         self.columns = tuple(c[0] for c in colspec)
