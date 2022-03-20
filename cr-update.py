@@ -186,7 +186,7 @@ def import_all_raiders(db, periodic=noop):
     import_raiders(cur, ids, full=owned, periodic=periodic)
     db.commit()
     periodic()
-    return ids
+    return ids, questing
 
 
 def import_one_raider(db, rid, periodic=noop):
@@ -407,7 +407,8 @@ def import_raider_recruitment(db, idlist, full=False, periodic=noop):
     periodic()
 
 
-def import_raider_quests(db, idlist, periodic=noop):
+def import_raider_quests(db, idlist, questing_ids=None,
+                         periodic=noop):
     import web3
 
     def sql_insert(p):
@@ -424,9 +425,11 @@ def import_raider_quests(db, idlist, periodic=noop):
 
     for idx, rid in enumerate(sorted(idlist)):
         periodic(message='%d/%d - raider %d' % (idx, len(idlist), rid))
+        onquest = (rid in questing_ids) if questing_ids else \
+            questing.onQuest(rid).call()
+        periodic()
         params = {'raider': rid}
-        if not questing.onQuest(rid).call():
-            periodic()
+        if not onquest:
             params['status'] = 0
             sql_insert(params)
             continue
@@ -482,9 +485,10 @@ def findraider(db, ident):
 
 def import_or_update(db, raider=None, gear=True, timing=True,
                      periodic=noop):
+    questing = None
     if raider is None:
         periodic('Updating all raiders')
-        ids = import_all_raiders(db, periodic=periodic)
+        ids, questing = import_all_raiders(db, periodic=periodic)
     else:
         periodic('Updating raider %d' % (raider,))
         ids = (raider,)
@@ -493,7 +497,7 @@ def import_or_update(db, raider=None, gear=True, timing=True,
         import_raider_gear(db, raider, periodic=periodic)
     if timing:
         import_raider_recruitment(db, ids, periodic=periodic)
-        import_raider_quests(db, ids, periodic=periodic)
+        import_raider_quests(db, ids, questing_ids=questing, periodic=periodic)
 
 
 def main():
