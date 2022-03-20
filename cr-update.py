@@ -3,7 +3,6 @@ import requests
 import sqlite3
 import argparse
 import sys
-import time
 import datetime
 import json
 
@@ -389,11 +388,11 @@ def import_raider_recruitment(db, idlist, full=False, periodic=noop):
             periodic()
             changed = True
 
-        utcnow = int(time.time())
-        if next_time is None or next_time < utcnow:
+        utcnow_secs = datetime.datetime.utcnow().timestamp()
+        if next_time is None or next_time < utcnow_secs:
             # XXX does this return a negative when a recruit is available?
             delta = recruiting.nextRecruitTime(rid).call()
-            next_time = utcnow + delta
+            next_time = utcnow_secs + delta
             periodic()
             changed = True
 
@@ -446,7 +445,9 @@ def import_raider_quests(db, idlist, periodic=noop):
             sql_insert(params)
             continue
         if returning:
-            params['returns_on'] = myquest.timeHome(rid).call()
+            utcnow_secs = datetime.datetime.utcnow().timestamp()
+            delta = myquest.timeTillHome(rid).call()
+            params['returns_on'] = 0 if delta <= 0 else utcnow_secs + delta
             periodic()
         else:
             params['started_on'] = myquest.questStartedTime(rid).call()
