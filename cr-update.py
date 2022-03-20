@@ -408,6 +408,8 @@ def import_raider_recruitment(db, idlist, full=False, periodic=noop):
 
 
 def import_raider_quests(db, idlist, periodic=noop):
+    import web3
+
     def sql_insert(p):
         cur.execute(
             'INSERT OR REPLACE INTO quests (%s) VALUES (%s)' % (
@@ -448,7 +450,10 @@ def import_raider_quests(db, idlist, periodic=noop):
             continue
         if returning:
             utcnow_secs = datetime.datetime.utcnow().timestamp()
-            delta = myquest.timeTillHome(rid).call()
+            try:
+                delta = myquest.timeTillHome(rid).call()
+            except web3.exceptions.ContractLogicError:
+                delta = -1
             params['returns_on'] = 0 if delta <= 0 else utcnow_secs + delta
             periodic()
         else:
