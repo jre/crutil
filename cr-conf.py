@@ -8,7 +8,7 @@ import datetime
 
 appname = 'crutil'
 
-slots = ('main_hand', 'dress', 'knickknack', 'finger', 'background')
+slots = ('main_hand', 'dress', 'knickknack', 'finger', 'neck', 'background')
 
 
 class CRConf():

@@ -350,7 +350,7 @@ class RaiderComboReport(TabularReport):
 
         equipped = {}
         gear = {}
-        for slot in ('dress', 'main_hand', 'finger'):
+        for slot in ('dress', 'main_hand', 'finger', 'neck'):
             if slot in slot_names:
                 equipped[slot] = (slot_names[slot],) + slot_stats[slot]
             cur.execute('''SELECT u.name, u.strength,
@@ -368,19 +368,23 @@ class RaiderComboReport(TabularReport):
                 dress_stats = dress_row[1:]
                 for ring_row in gear['finger']:
                     ring_stats = ring_row[1:]
-                    new_raw_stats = map(sum, zip(slot_stats[None], weap_stats,
-                                                 dress_stats, ring_stats))
-                    new_raw_stats = tuple(new_raw_stats)
-                    new_skewed_stats = skew_stats(new_raw_stats)
-                    new_derived_stats = derive_stats(level, new_skewed_stats)
-                    new_stats_all = new_skewed_stats + new_derived_stats + \
-                        (sum(new_derived_stats),)
-                    stats_diff = tuple(n - c for n, c in
-                                       zip(new_stats_all, cur_stats_all))
-                    combo_row = ('',) + new_stats_all
-                    diff_row = ('',) + stats_diff
-                    combos.append((combo_row, diff_row,
-                                   weap_row, dress_row, ring_row))
+                    for neck_row in gear['neck']:
+                        neck_stats = neck_row[1:]
+                        new_raw_stats = map(sum, zip(
+                            slot_stats[None], weap_stats, dress_stats,
+                            ring_stats, neck_stats))
+                        new_raw_stats = tuple(new_raw_stats)
+                        new_skewed_stats = skew_stats(new_raw_stats)
+                        new_derived_stats = derive_stats(
+                            level, new_skewed_stats)
+                        new_stats_all = (new_skewed_stats + new_derived_stats +
+                                         (sum(new_derived_stats),))
+                        stats_diff = tuple(n - c for n, c in
+                                           zip(new_stats_all, cur_stats_all))
+                        combo_row = ('',) + new_stats_all
+                        diff_row = ('',) + stats_diff
+                        combos.append((combo_row, diff_row, weap_row,
+                                       dress_row, ring_row, neck_row))
 
         combos.sort(key=lambda i: i[0][-1], reverse=True)
         return set(equipped.values()), combos
@@ -417,7 +421,7 @@ def calc_best_gear(db, rid, count, url, mobs):
     wins = ' '.join(fmt_percentage(sim.fetch_one(cur, rid, m)[2],
                                    moblen, bold=True)
                     for m in mobs)
-    print(fmt_base('%-*s  %s\n%-*s  %s\n%-*s  %s\n%-*s  %s\n%-*s  %s  %s\n' % (
+    print(fmt_base('%-*s  %s\n%-*s  %s\n%-*s  %s\n%-*s  %s\n%-*s  %s\n%-*s  %s  %s\n' % (
         namelen, id_lvl_name, fmtstats(slot_stats[None]),
         namelen, slot_names.get('main_hand', 'nothing'),
         fmtstats(slot_stats.get('main_hand', (0,) * 6)),
@@ -425,14 +429,17 @@ def calc_best_gear(db, rid, count, url, mobs):
         fmtstats(slot_stats.get('dress', (0,) * 6)),
         namelen, slot_names.get('finger', 'nothing'),
         fmtstats(slot_stats.get('finger', (0,) * 6)),
+        namelen, slot_names.get('neck', 'nothing'),
+        fmtstats(slot_stats.get('neck', (0,) * 6)),
         namelen, '', fmtstats(cur_stats_line), wins)))
 
-    for combo_row, diff_row, weap_row, dress_row, ring_row in combos[:count]:
+    for combo_row, diff_row, weap_row, dress_row, ring_row, neck_row in combos[:count]:
         cur_equipment = True
         gear_combo = {}
         for slot, row in (('main_hand', weap_row),
                           ('dress', dress_row),
-                          ('finger', ring_row)):
+                          ('finger', ring_row),
+                          ('neck', neck_row)):
             gear_combo[slot] = row
             stats = '%-*s  %s' % (
                 namelen, row[0], fmtstats(row[1:]))
