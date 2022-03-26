@@ -702,6 +702,73 @@ def call_fight_simulator(url, db, ids, mobs, count=1000):
                            for i in range(report.colcount)))
 
 
+class QuestReport(TabularReport):
+    def __init__(self):
+        super().__init__((
+            ('id', 'ID', 'str', True),
+            ('name', 'Raider', 'str', False),
+            ('raids', 'Raids', 'positive_count', True),
+            ('quest', 'Quest', 'str', False),
+            ('left', 'Left', 'epoch_seconds', True),
+            ('homenow', 'Home Now', 'epoch_seconds', True),
+            ('next', 'Next Reward', 'epoch_seconds', True),
+            ('homenext', 'Home After Next', 'epoch_seconds', True),
+            ('nextnext', 'Reward After Next', 'epoch_seconds', True),
+            ('homenextnext', 'Home After After Next', 'epoch_seconds', True),
+            ('nextnextnext', 'Reward After After Next', 'epoch_seconds', True),
+            ('homenextnextnext', 'Home After After After Next',
+             'epoch_seconds', True)))
+
+    def fetch(self, db, ids):
+        cur = db.cursor()
+
+        cur.execute('''SELECT r.id, r.level, r.name, q.contract, q.started_on,
+            q.return_divisor, q.reward_time FROM raiders r, quests q
+            WHERE r.id = q.raider AND q.status = 1 ORDER BY r.id''')
+        ids = set(ids)
+        now = datetime.datetime.utcnow()
+        now_secs = int(now.timestamp())
+        last_daily = last_daily_refresh(now)
+        last_weekly = last_weekly_refresh(now)
+        rows = list(cur.fetchall())
+        for rid, level, name, addr, started, retdiv, reward in rows:
+            if rid not in ids:
+                continue
+            raids, endl = get_raider_raids(cur, rid, last_daily, last_weekly)
+            questname = cf.get_quest_name(address=addr)
+            next = reward - ((now_secs - started) % reward)
+            nextnext = next + reward
+            nextnextnext = next + reward * 2
+            lvlname = '[%d] %s' % (level, name)
+            homenow = (now_secs - started) / retdiv
+            homeafter = (now_secs + next - started) / retdiv
+            homeafterafter = (now_secs + nextnext - started) / retdiv
+            homeafterafterafter = (now_secs + nextnextnext - started) / retdiv
+            times = tuple(now_secs + i for i in (
+                homenow, next, homeafter, nextnext, homeafterafter,
+                nextnextnext, homeafterafterafter))
+            yield (rid, lvlname, raids, questname, started) + times
+
+
+def show_quest_info(db, ids, showall=False):
+    report = QuestReport()
+    tbl = list(report.fetch(db, ids))
+    if not showall:
+        filter_idx = report.col_idx['raids']
+        tbl = [i for i in tbl if i[filter_idx] > 0]
+    sort_idx = report.col_idx['next']
+    tbl.sort(key=lambda v: v[sort_idx])
+    adj = datetime.datetime.now().timestamp() - \
+        datetime.datetime.utcnow().timestamp()
+    fmt = {
+        'str': str,
+        'delta_seconds': fmt_raider_timedelta,
+        'epoch_seconds': lambda v: fmt_timesecs_nicely(v, adj),
+        'positive_count': fmt_positive_count,
+    }
+    report.print(tbl, fmt, sepwidth=3)
+
+
 def main():
     if not cf.load_config():
         print('error: please run ./cr-conf.py to configure')
@@ -770,6 +837,14 @@ def main():
                        type=int, default=1000,
                        help='Count of fights to simulate')
 
+    p_quest = subparsers.add_parser('quests', help="Show questing info")
+    p_quest.set_defaults(update=False)
+    p_quest.add_argument('raider', type=raider, nargs='*', default='all',
+                         help='Raider name or id')
+    p_quest.add_argument('-v', dest='verbose',
+                         default=False, action='store_true',
+                         help='Show raiders without raids left')
+
     args = parser.parse_args()
 
     sorting = tuple(i.strip().lower() for i in args.sort.split(',') if i)
@@ -778,7 +853,17 @@ def main():
         show_all_raiders(db, sorting=sorting)
         return
 
-    rids, rids_trusted = args.raider
+    if args.raider == 'all':
+        rids, rids_trusted = findraider(db, args.raider)
+    elif args.cmd == 'quests':
+        all_rids = []
+        for i in args.raider:
+            all_rids.extend(i[0])
+        rids = sorted(set(all_rids))
+        rids_trusted = all(i[1] for i in args.raider)
+    else:
+        rids, rids_trusted = args.raider
+
     if args.update:
         cru = __import__('cr-update')
         if not rids_trusted:
@@ -800,6 +885,8 @@ def main():
         show_raider(db, rids[0])
     elif args.cmd == 'best':
         calc_best_gear(db, rids[0], args.count, args.url, args.mob)
+    elif args.cmd == 'quests':
+        show_quest_info(db, rids, showall=args.verbose)
     elif args.cmd == 'sim':
         url = args.url
         if ':' not in url and '/' not in url:

@@ -53,6 +53,12 @@ Simulate fights for all raider against a mob:
 Simulate fights for Raider1 and Raider2 against robber normal and heroic:
 ./cr-report.py sim Raider1,Raider2 robber robberHeroic
 
+Report questing information:
+./cr-report.py quests
+
+Report questing information for all raiders:
+./cr-report.py quests -v
+
 
 Package fight-simulator-cli binaries:
 git clone https://gitlab.com/crypto-raider-tools/fight-simulator-cli

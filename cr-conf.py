@@ -175,6 +175,17 @@ class CRConf():
         abi = self._get_eth_abi(name)
         return w3.eth.contract(address=self._contracts[name], abi=abi)
 
+    def get_quest_name(self, name=None, address=None):
+        assert (name is None) != (address is None)
+        if name is None:
+            if address not in self._contract_names:
+                raise ValueError('unknown contract address: %s' % (address,))
+            name = self._contract_names[address]
+        assert name in self._contracts
+        if name not in self._quest_names:
+            raise ValueError('not questing contract address: %s' % (address,))
+        return self._quest_names[name]
+
 
 conf = CRConf()
 
