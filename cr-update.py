@@ -88,7 +88,13 @@ def setupdb(db):
         started_on INTEGER,
         return_divisor INTEGER,
         returns_on INTEGER,
+        reward_time INTEGER,
         FOREIGN KEY(raider) REFERENCES raiders(id))''')
+
+    cur.execute('SELECT COUNT(cid) FROM PRAGMA_TABLE_INFO(?) where name = ?',
+                ('quests', 'reward_time'))
+    if cur.fetchone()[0] == 0:
+        cur.execute('ALTER TABLE quests ADD COLUMN reward_time INTEGER')
 
     db.commit()
 
@@ -451,8 +457,8 @@ def import_raider_quests(db, idlist, questing_ids=None,
         if returning is None:
             sql_insert(params)
             continue
+        utcnow_secs = datetime.datetime.utcnow().timestamp()
         if returning:
-            utcnow_secs = datetime.datetime.utcnow().timestamp()
             try:
                 delta = myquest.timeTillHome(rid).call()
             except web3.exceptions.ContractLogicError:
@@ -460,9 +466,12 @@ def import_raider_quests(db, idlist, questing_ids=None,
             params['returns_on'] = 0 if delta <= 0 else utcnow_secs + delta
             periodic()
         else:
-            params['started_on'] = myquest.questStartedTime(rid).call()
+            questing_secs = myquest.timeQuesting(rid).call()
+            params['started_on'] = utcnow_secs - questing_secs
             periodic()
             params['return_divisor'] = myquest.returnHomeTimeDivisor().call()
+            periodic()
+            params['reward_time'] = myquest.calcRaiderRewardTime(rid).call()
             periodic()
         sql_insert(params)
     periodic(message='%d/%d - done' % (len(idlist), len(idlist)))
