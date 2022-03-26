@@ -166,12 +166,22 @@ def fmt_raider_timedelta(delta):
         return '?'
     elif delta == 0:
         return 'now'
-    parts = str(datetime.timedelta(seconds=int(delta))).split(',')
-    return ', '.join(tuple(parts[:-1]) + ('%8s' % (parts[-1].strip(),),))
+    timestr = str(datetime.timedelta(seconds=int(delta)))
+    parts = timestr.rsplit(':', 1)[0].split(',')
+    return ', '.join(tuple(parts[:-1]) + ('%5s' % (parts[-1].strip(),),))
 
 
 def fmt_positive_count(count):
     return '?' if count < 0 else str(count)
+
+
+def fmt_timesecs_nicely(secs, adjust=0):
+    if secs < 0:
+        return '?'
+    elif secs == 0:
+        return 'now'
+    dt = datetime.datetime.fromtimestamp(secs + adjust)
+    return dt.strftime('%a %h %e %k:%M')
 
 
 class TabularReport():
@@ -215,7 +225,7 @@ class RaiderListReport(TabularReport):
             ('recruit', 'Recruit', 'epoch_seconds', True),
             ('cost', 'Cost', 'int', True),
             ('quest', 'Questing', 'str', False),
-            ('rate', 'Rate', 'delta_seconds', True),
+            ('rate', 'Rate', 'interval_seconds', True),
             ('returns', 'Return', 'delta_seconds', True)))
 
     def fetch(self, db):
@@ -247,15 +257,15 @@ def show_all_raiders(db, sorting=()):
     report = RaiderListReport()
     raw_tbl = list(report.fetch(db))
     report.sort(raw_tbl, sorting)
-    now = datetime.datetime.utcnow()
-
+    utcnow_secs = datetime.datetime.utcnow().timestamp()
+    adj = datetime.datetime.now().timestamp() - utcnow_secs
     fmt = {
         'str': str,
         'int': str,
         'positive_count': fmt_positive_count,
-        'delta_seconds': fmt_raider_timedelta,
-        'epoch_seconds': lambda v: fmt_raider_timedelta(v - now.timestamp()
-                                                        if v > 0 else v),
+        'interval_seconds': fmt_raider_timedelta,
+        'delta_seconds': lambda v: fmt_timesecs_nicely(v + utcnow_secs, adj),
+        'epoch_seconds': lambda v: fmt_timesecs_nicely(v, adj),
     }
     report.print(raw_tbl, fmt, sepwidth=2)
 
