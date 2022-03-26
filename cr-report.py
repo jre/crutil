@@ -186,6 +186,22 @@ class TabularReport():
     def colcount(self):
         return len(self.columns)
 
+    def print(self, raw_tbl, fmt, sepwidth=1):
+        str_tbl = [self.columns]
+        str_tbl.extend(tuple(fmt[self.coltypes[i]](v)
+                             for i, v in enumerate(r)) for r in raw_tbl)
+        widths = [len(i) for i in self.columns]
+        for row in str_tbl:
+            for i in range(self.colcount):
+                if len(row[i]) > widths[i]:
+                    widths[i] = len(row[i])
+
+        sep = ' ' * sepwidth
+        for row in str_tbl:
+            print(sep.join(('%*s' if self.right_align[i] else '%-*s') % (
+                widths[i], row[i])
+                           for i in range(self.colcount)))
+
 
 class RaiderListReport(TabularReport):
     def __init__(self):
@@ -242,20 +258,7 @@ def show_all_raiders(db, sorting=()):
         'epoch_seconds': lambda v: fmt_raider_timedelta(v - now.timestamp()
                                                         if v > 0 else v),
     }
-
-    str_tbl = [report.columns]
-    str_tbl.extend(tuple(fmt[report.coltypes[i]](v)
-                         for i, v in enumerate(r)) for r in raw_tbl)
-    widths = [len(i) for i in report.columns]
-    for row in str_tbl:
-        for i in range(report.colcount):
-            if len(row[i]) > widths[i]:
-                widths[i] = len(row[i])
-
-    for row in str_tbl:
-        print(' '.join(('%*s' if report.right_align[i] else '%-*s') % (
-            widths[i], row[i])
-                       for i in range(report.colcount)))
+    report.print(raw_tbl, fmt, sepwidth=2)
 
 
 def get_raider_info(cur, rid):
