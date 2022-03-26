@@ -136,12 +136,12 @@ def get_raider_recruiting(cur, rid, now):
 
 
 def get_raider_questing(cur, rid, now):
-    cur.execute('''SELECT status, started_on, return_divisor, returns_on
-        FROM quests WHERE raider = ?''', (rid,))
+    cur.execute('''SELECT status, started_on, return_divisor, reward_time,
+        returns_on FROM quests WHERE raider = ?''', (rid,))
     rows = tuple(cur.fetchall())
     if len(rows) == 0:
         return '?', -1
-    status, started_on, return_div, returns_on = rows[0]
+    status, started_on, return_div, reward_secs, returns_on = rows[0]
     is_returning = cf.quest_returning[status]
     now_secs = now.timestamp()
 
@@ -158,7 +158,7 @@ def get_raider_questing(cur, rid, now):
         else:
             status_str = 'back'
             back_secs = 0
-    return status_str, back_secs
+    return status_str, back_secs, reward_secs
 
 
 def fmt_raider_timedelta(delta):
@@ -215,8 +215,8 @@ class RaiderListReport(TabularReport):
             ('recruit', 'Recruit', 'epoch_seconds', True),
             ('cost', 'Cost', 'int', True),
             ('quest', 'Questing', 'str', False),
-            ('returns', 'Return', 'delta_seconds', True),
-            ('wearing', 'Wearing', 'str', False)))
+            ('rate', 'Rate', 'delta_seconds', True),
+            ('returns', 'Return', 'delta_seconds', True)))
 
     def fetch(self, db):
         cur = db.cursor()
@@ -230,12 +230,11 @@ class RaiderListReport(TabularReport):
             lvl_name = '[%d] %s' % (lvl, name)
             raids, endless = get_raider_raids(cur, id, last_daily, last_weekly)
             recruit_time, recruit_cost = get_raider_recruiting(cur, id, now)
-            quest_status, quest_back = get_raider_questing(cur, id, now)
-            wear_seq = get_equipped(cur, id)
-            wear_str = (', '.join(wear_seq) if wear_seq else 'nothing')
+            quest_status, quest_back, quest_rate = \
+                get_raider_questing(cur, id, now)
             yield (id, lvl_name, gen, race, raids, endless,
                    recruit_time, recruit_cost,
-                   quest_status, quest_back, wear_str)
+                   quest_status, quest_rate, quest_back)
 
     def sort(self, rows, sorting=None):
         if not sorting:
