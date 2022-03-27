@@ -619,7 +619,7 @@ class FightSimReport(TabularReport):
     mobs = ('hogger', 'hoggerHeroic', 'faune', 'fauneHeroic',
             'rat', 'ratHeroic', 'krok', 'krokHeroic',
             'olgoNormal', 'olgoHeroic', 'cauldronNormal', 'cauldronHeroic',
-            'robber', 'robberHeroic')
+            'robber', 'robberHeroic', 'fake', 'fakeHeroic')
     stat_names = ('strength', 'intelligence', 'agility',
                   'wisdom', 'charm', 'luck')
 
