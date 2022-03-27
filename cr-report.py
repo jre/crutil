@@ -162,7 +162,7 @@ def get_raider_questing(cur, rid, now):
 
 
 def fmt_raider_timedelta(delta):
-    if delta < 0:
+    if delta is None or delta < 0:
         return '?'
     elif delta == 0:
         return 'now'
