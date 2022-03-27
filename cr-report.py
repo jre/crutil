@@ -16,7 +16,7 @@ def derive_stats(level, base):
     str, int, dex, wis, chr, luck = base
     level_3_sqrt = math.sqrt(level * 3)
     maxhp = (str * 2.9) + (int * 1.5) + (dex * 2.1) + (chr * 3.5)
-    mindam = (str * 0.35) + (int * 0.45) + (dex * 0.4) + (wis * 0.45)
+    mindam = (str * 0.35) + (int * 0.45) + (dex * 0.4) + (wis * 0.5)
     maxdam = (str * 0.45) + (int * 0.65) + (dex * 0.55) + (wis * 0.55)
     # hit chance
     hitc = math.pow(math.tanh(((int * 2) + (wis * 2)) / (level + 100)), 2) * \
@@ -25,7 +25,7 @@ def derive_stats(level, base):
     hitf = math.pow(math.tanh((dex * 4) / (level + 100)), 2) * \
         (level_3_sqrt + 35)
     # crit damage multiplier
-    cdm = (math.pow(math.tanh(((int * 2) + (luck * 2.5)) / (level + 100)), 2) *
+    cdm = (math.pow(math.tanh(((int * 2.5) + (luck * 2.5)) / (level + 100)), 2) *
            ((level_3_sqrt / 100) + 0.4)) + \
         (math.tanh(((int * 0.5) + (luck * 4)) / (level + 100)) *
          ((level_3_sqrt / 100) + 0.1))
