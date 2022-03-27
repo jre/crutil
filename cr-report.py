@@ -212,6 +212,11 @@ class TabularReport():
                 widths[i], row[i])
                            for i in range(self.colcount)))
 
+    def write_csv(self, csvw, raw_tbl):
+        csvw.writerow(self.columns)
+        for row in raw_tbl:
+            csvw.writerow(row)
+
 
 class RaiderListReport(TabularReport):
     def __init__(self):
