@@ -717,22 +717,30 @@ def call_fight_simulator(url, db, ids, mobs, count=1000):
 
 
 class QuestReport(TabularReport):
-    def __init__(self):
-        super().__init__((
+    def __init__(self, reward_range=1):
+        assert reward_range[0] >= 1 and reward_range[1] >= 1 and \
+            reward_range[0] <= reward_range[1]
+        self._first_reward = reward_range[0]
+        self._last_reward = reward_range[1]
+
+        colspec = [
             ('id', 'ID', 'str', True),
             ('name', 'Raider', 'str', False),
             ('raids', 'Raids', 'positive_count', True),
             ('quest', 'Quest', 'str', False),
-            ('left', 'Left', 'epoch_seconds', True),
-            ('homenow', 'Home Now', 'epoch_seconds', True),
-            ('next', 'Next Reward', 'epoch_seconds', True),
-            ('homenext', 'Home After Next', 'epoch_seconds', True),
-            ('nextnext', 'Reward After Next', 'epoch_seconds', True),
-            ('homenextnext', 'Home After After Next', 'epoch_seconds', True),
-            ('nextnextnext', 'Reward After After Next', 'epoch_seconds', True),
-            ('homenextnextnext', 'Home After After After Next',
-             'epoch_seconds', True)),
-                         sepwidth=3)
+            ('started', 'Started', 'epoch_seconds', False),
+            ('homenow', 'Home Now', 'epoch_seconds', False)]
+        for i in range(self._first_reward, self._last_reward + 1):
+            colspec.extend((
+                ('reward%d' % i, 'Reward %d' % i, 'epoch_seconds', True),
+                ('home%d' % i, 'Home %d' % i, 'epoch_seconds', False)))
+        super().__init__(colspec)
+
+        reward_count = self._last_reward - self._first_reward + 1
+        self.col_sep = ['  ', ' ', '  ']
+        self.col_sep.extend(['  |  '] * (2 + (reward_count * 2)))
+        self.col_sep[6::2] = [' > '] * reward_count
+        self.col_sep.append('')
 
     def fetch(self, db, ids):
         cur = db.cursor()
@@ -750,28 +758,29 @@ class QuestReport(TabularReport):
             if rid not in ids:
                 continue
             raids, endl = get_raider_raids(cur, rid, last_daily, last_weekly)
-            questname = cf.get_quest_name(address=addr)
+            ret = [rid,
+                   '[%d] %s' % (level, name),
+                   raids,
+                   cf.get_quest_name(address=addr),
+                   started,
+                   now_secs + ((now_secs - started) / retdiv)]
+
             next = now_secs + (reward - ((now_secs - started) % reward))
-            nextnext = next + reward
-            nextnextnext = next + reward * 2
-            lvlname = '[%d] %s' % (level, name)
-            homenow = now_secs + ((now_secs - started) / retdiv)
-            homeafter = next + ((next - started) / retdiv)
-            homeafterafter = nextnext + (nextnext - started) / retdiv
-            homeafterafterafter = nextnextnext + \
-                (nextnextnext - started) / retdiv
-            yield (rid, lvlname, raids, questname, started, homenow, next,
-                   homeafter, nextnext, homeafterafter, nextnextnext,
-                   homeafterafterafter)
+            next += (self._first_reward - 1) * reward
+            for _ in range(self._last_reward - self._first_reward + 1):
+                home = next + ((next - started) / retdiv)
+                ret.extend((next, home))
+                next += reward
+            yield ret
 
 
-def show_quest_info(db, ids, showall=False):
-    report = QuestReport()
+def show_quest_info(db, ids, rewards, showall=False):
+    report = QuestReport(reward_range=rewards)
     tbl = list(report.fetch(db, ids))
     if not showall:
         filter_idx = report.col_idx['raids']
         tbl = [i for i in tbl if i[filter_idx] > 0]
-    sort_idx = report.col_idx['next']
+    sort_idx = report.col_idx['homenow'] + 1
     tbl.sort(key=lambda v: v[sort_idx])
     adj = datetime.datetime.now().timestamp() - \
         datetime.datetime.utcnow().timestamp()
@@ -809,6 +818,15 @@ def main():
 
     def optional_mob_name(v):
         return mob_name(v) if v else None
+
+    def int_range(v):
+        if '-' in v:
+            res = tuple(map(int, v.split('-', 1)))
+        else:
+            res = (1, int(v))
+        if res[0] <= 0 or res[1] <= 0 or res[0] > res[1]:
+            raise ValueError()
+        return res
 
     parser = argparse.ArgumentParser()
     parser.set_defaults(cmd='list', sort='')
@@ -859,6 +877,9 @@ def main():
     p_quest.set_defaults(update=False)
     p_quest.add_argument('raider', type=raider, nargs='*', default='all',
                          help='Raider name or id')
+    p_quest.add_argument('-c', dest='count',
+                         type=int_range, default=int_range('2'),
+                         help='Reward cycle count to show')
     p_quest.add_argument('-v', dest='verbose',
                          default=False, action='store_true',
                          help='Show raiders without raids left')
@@ -906,7 +927,7 @@ def main():
     elif args.cmd == 'best':
         calc_best_gear(db, rids[0], args.count, args.url, args.mob)
     elif args.cmd == 'quests':
-        show_quest_info(db, rids, showall=args.verbose)
+        show_quest_info(db, rids, rewards=args.count, showall=args.verbose)
     elif args.cmd == 'sim':
         url = args.url
         if ':' not in url and '/' not in url:

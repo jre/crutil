@@ -68,5 +68,11 @@ Simulate fights for Raider1 and Raider2 against robber normal and heroic:
 Report questing information:
 ./cr-report.py quests
 
+Report questing information for the next 4 rewards:
+./cr-report.py quests -c 4
+
+Report questing information for rewards 3-5:
+./cr-report.py quests -c 3-5
+
 Report questing information for all raiders:
 ./cr-report.py quests -v
