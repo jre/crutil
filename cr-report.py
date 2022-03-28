@@ -189,18 +189,20 @@ def fmt_timesecs_nicely(secs, adjust=0):
 
 
 class TabularReport():
-    def __init__(self, colspec):
+    def __init__(self, colspec, sepwidth=1):
         self.columns = tuple(c[0] for c in colspec)
         self.labels = tuple(c[1] for c in colspec)
         self.coltypes = tuple(c[2] for c in colspec)
         self.right_align = tuple(c[3] for c in colspec)
         self.col_idx = {k: i for i, k in enumerate(self.columns)}
+        self.col_sep = [' ' * sepwidth] * (len(self.columns) - 1)
+        self.col_sep.append('')
 
     @property
     def colcount(self):
         return len(self.columns)
 
-    def print(self, raw_tbl, fmt, sepwidth=1):
+    def print(self, raw_tbl, fmt):
         str_tbl = [self.columns]
         str_tbl.extend(tuple(fmt[self.coltypes[i]](v)
                              for i, v in enumerate(r)) for r in raw_tbl)
@@ -210,11 +212,10 @@ class TabularReport():
                 if len(row[i]) > widths[i]:
                     widths[i] = len(row[i])
 
-        sep = ' ' * sepwidth
         for row in str_tbl:
-            print(sep.join(('%*s' if self.right_align[i] else '%-*s') % (
-                widths[i], row[i])
-                           for i in range(self.colcount)))
+            print(''.join(('%*s%s' if self.right_align[i] else '%-*s%s') % (
+                widths[i], row[i], self.col_sep[i])
+                          for i in range(self.colcount)))
 
     def write_csv(self, csvw, raw_tbl):
         csvw.writerow(self.columns)
@@ -235,7 +236,11 @@ class RaiderListReport(TabularReport):
             ('cost', 'Cost', 'int', True),
             ('quest', 'Questing', 'str', False),
             ('rate', 'Rate', 'interval_seconds', True),
-            ('returns', 'Return', 'delta_seconds', True)))
+            ('returns', 'Return', 'delta_seconds', True)),
+                         sepwidth=2)
+
+        for i in (1, 3, 4):
+            self.col_sep[i] = ' '
 
     def fetch(self, db):
         cur = db.cursor()
@@ -276,7 +281,7 @@ def show_all_raiders(db, sorting=()):
         'delta_seconds': lambda v: fmt_timesecs_nicely(v + utcnow_secs, adj),
         'epoch_seconds': lambda v: fmt_timesecs_nicely(v, adj),
     }
-    report.print(raw_tbl, fmt, sepwidth=2)
+    report.print(raw_tbl, fmt)
 
 
 def get_raider_info(cur, rid):
@@ -726,7 +731,8 @@ class QuestReport(TabularReport):
             ('homenextnext', 'Home After After Next', 'epoch_seconds', True),
             ('nextnextnext', 'Reward After After Next', 'epoch_seconds', True),
             ('homenextnextnext', 'Home After After After Next',
-             'epoch_seconds', True)))
+             'epoch_seconds', True)),
+                         sepwidth=3)
 
     def fetch(self, db, ids):
         cur = db.cursor()
@@ -775,7 +781,7 @@ def show_quest_info(db, ids, showall=False):
         'epoch_seconds': lambda v: fmt_timesecs_nicely(v, adj),
         'positive_count': fmt_positive_count,
     }
-    report.print(tbl, fmt, sepwidth=3)
+    report.print(tbl, fmt)
 
 
 def main():
