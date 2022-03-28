@@ -16,6 +16,9 @@ Check if simulator is running:
 Create or update database:
 ./cr-update.py
 
+
+# Raider list report:
+
 List all raiders:
 ./cr-report.py list
 
@@ -27,6 +30,9 @@ List all raiders sorted by quest return time:
 
 Sort by a list of columns, prefixing with - for reverse sort:
 ./cr-report.py list -s raids,endless,-name
+
+
+# Raider gear report:
 
 Show a raider's gear:
 ./cr-report.py gear <raider-id>
@@ -41,6 +47,9 @@ If you want to see more gear combos, use -c with a count:
 Additionally, mob names can be listed to show simulation results for the mobs:
 ./cr-report.py best <raider-id> olgoHeroic robber robberHeroic
 
+
+# Fight simulator report:
+
 Simulate fight (requires fight-simulator-cli server)
 ./cr-report.py sim <raider-id> <mob-name>
 
@@ -53,20 +62,11 @@ Simulate fights for all raider against a mob:
 Simulate fights for Raider1 and Raider2 against robber normal and heroic:
 ./cr-report.py sim Raider1,Raider2 robber robberHeroic
 
+
+# Quest reward report:
+
 Report questing information:
 ./cr-report.py quests
 
 Report questing information for all raiders:
 ./cr-report.py quests -v
-
-
-Package fight-simulator-cli binaries:
-git clone https://gitlab.com/crypto-raider-tools/fight-simulator-cli
-cd ~/fight-simulator-cli
-npm install
-npm run compile
-`npm bin`/pkg . --out-path `pwd`/mybin/ -t node16-linux-x64,node16-win-x64,node16-mac-x64
-
-Run from local checkout:
-printf '#!\ncd ~/fight-simulator-cli && exec node build/cli.js "$@"\n' > ~/crutil/fight-simulator-cli
-chmod a+x ~/crutil/fight-simulator-cli
