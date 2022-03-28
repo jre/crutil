@@ -10,6 +10,7 @@ import requests
 
 cr_conf = __import__('cr-conf')
 cf = cr_conf.conf
+ampm = False
 
 
 def derive_stats(level, base):
@@ -181,7 +182,10 @@ def fmt_timesecs_nicely(secs, adjust=0):
     elif secs == 0:
         return 'now'
     dt = datetime.datetime.fromtimestamp(secs + adjust)
-    return dt.strftime('%a %h %e %k:%M')
+    if ampm:
+        return dt.strftime('%a %h %e %l:%M %p')
+    else:
+        return dt.strftime('%a %h %e %k:%M')
 
 
 class TabularReport():
@@ -804,6 +808,9 @@ def main():
     parser.set_defaults(cmd='list', sort='')
     subparsers = parser.add_subparsers(dest='cmd')
 
+    parser.add_argument('-2', dest='ampm', default=True, action='store_false',
+                        help='Use 24-hour time when applicable')
+
     p_best = subparsers.add_parser('best',
                                    help='Calculate best gear for raider')
     p_best.add_argument('raider', type=raider, help='Raider name or id')
@@ -852,6 +859,8 @@ def main():
 
     args = parser.parse_args()
 
+    global ampm
+    ampm = args.ampm
     sorting = tuple(i.strip().lower() for i in args.sort.split(',') if i)
 
     if args.cmd is None or args.cmd == 'list':
