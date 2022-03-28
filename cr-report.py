@@ -741,18 +741,18 @@ class QuestReport(TabularReport):
                 continue
             raids, endl = get_raider_raids(cur, rid, last_daily, last_weekly)
             questname = cf.get_quest_name(address=addr)
-            next = reward - ((now_secs - started) % reward)
+            next = now_secs + (reward - ((now_secs - started) % reward))
             nextnext = next + reward
             nextnextnext = next + reward * 2
             lvlname = '[%d] %s' % (level, name)
-            homenow = (now_secs - started) / retdiv
-            homeafter = (now_secs + next - started) / retdiv
-            homeafterafter = (now_secs + nextnext - started) / retdiv
-            homeafterafterafter = (now_secs + nextnextnext - started) / retdiv
-            times = tuple(now_secs + i for i in (
-                homenow, next, homeafter, nextnext, homeafterafter,
-                nextnextnext, homeafterafterafter))
-            yield (rid, lvlname, raids, questname, started) + times
+            homenow = now_secs + ((now_secs - started) / retdiv)
+            homeafter = next + ((next - started) / retdiv)
+            homeafterafter = nextnext + (nextnext - started) / retdiv
+            homeafterafterafter = nextnextnext + \
+                (nextnextnext - started) / retdiv
+            yield (rid, lvlname, raids, questname, started, homenow, next,
+                   homeafter, nextnext, homeafterafter, nextnextnext,
+                   homeafterafterafter)
 
 
 def show_quest_info(db, ids, showall=False):
