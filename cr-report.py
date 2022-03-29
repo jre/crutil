@@ -150,7 +150,7 @@ def get_raider_questing(cur, rid, now):
         status_str = 'no'
         back_secs = 0
     elif not is_returning:
-        status_str = 'yes'
+        status_str = '/%s' % (fmt_raider_timedelta(reward_secs),)
         back_secs = int((now_secs - started_on) / return_div)
     elif is_returning:
         if returns_on and returns_on > now_secs:
@@ -159,7 +159,7 @@ def get_raider_questing(cur, rid, now):
         else:
             status_str = 'back'
             back_secs = 0
-    return status_str, back_secs, reward_secs
+    return status_str, back_secs
 
 
 def fmt_raider_timedelta(delta):
@@ -235,7 +235,6 @@ class RaiderListReport(TabularReport):
             ('recruit', 'Recruit', 'epoch_seconds', True),
             ('cost', 'Cost', 'int', True),
             ('quest', 'Questing', 'str', False),
-            ('rate', 'Rate', 'interval_seconds', True),
             ('returns', 'Return', 'delta_seconds', True)),
                          sepwidth=2)
 
@@ -254,11 +253,10 @@ class RaiderListReport(TabularReport):
             lvl_name = '[%d] %s' % (lvl, name)
             raids, endless = get_raider_raids(cur, id, last_daily, last_weekly)
             recruit_time, recruit_cost = get_raider_recruiting(cur, id, now)
-            quest_status, quest_back, quest_rate = \
-                get_raider_questing(cur, id, now)
+            quest_status, quest_back = get_raider_questing(cur, id, now)
             yield (id, lvl_name, gen, race, raids, endless,
                    recruit_time, recruit_cost,
-                   quest_status, quest_rate, quest_back)
+                   quest_status, quest_back)
 
     def sort(self, rows, sorting=None):
         if not sorting:
