@@ -11,6 +11,13 @@ import requests
 cr_conf = __import__('cr-conf')
 cf = cr_conf.conf
 ampm = False
+main_slots = ('main_hand', 'dress', 'finger', 'neck')
+nostats = (0, 0, 0, 0, 0, 0)
+
+
+def nothing(slot):
+    assert slot in cr_conf.slots
+    return 'nothing (%s)' % (slot,)
 
 
 def derive_stats(level, base):
@@ -292,7 +299,7 @@ def get_raider_info(cur, rid):
     return (rows[0][0], rows[0][1], rows[0][2:])
 
 
-def get_raider_slots(cur, rid):
+def get_raider_slots(cur, rid, fill=False):
     r_level, r_name, r_stats = get_raider_info(cur, rid)
     names = {None: (r_level, r_name)}
     stats = {None: r_stats}
@@ -308,6 +315,10 @@ def get_raider_slots(cur, rid):
         names[g_slot] = g_name
         stats[g_slot] = g_stats
 
+    if fill:
+        for i in main_slots:
+            names.setdefault(i, nothing(i))
+            stats.setdefault(i, nostats)
     return names, stats
 
 
@@ -374,7 +385,7 @@ class RaiderComboReport(TabularReport):
 
         equipped = {}
         gear = {}
-        for slot in ('dress', 'main_hand', 'finger', 'neck'):
+        for slot in main_slots:
             if slot in slot_names:
                 equipped[slot] = (slot_names[slot],) + slot_stats[slot]
             cur.execute('''SELECT u.name, u.strength,
@@ -384,7 +395,7 @@ class RaiderComboReport(TabularReport):
                 AND slot = ? AND raider_id = ?''', (slot, rid))
             gear[slot] = list(remove_dups(cur.fetchall()))
             if len(gear[slot]) == 0:
-                gear[slot].append(('nothing (%s)' % (slot,), 0, 0, 0, 0, 0, 0))
+                gear[slot].append((nothing(slot),) + nostats)
         combos = []
         for weap_row in gear['main_hand']:
             weap_stats = weap_row[1:]
@@ -419,7 +430,7 @@ def calc_best_gear(db, rid, count, url, mobs):
     report = RaiderComboReport()
     sim = FightSimReport(url)
     cur = db.cursor()
-    slot_names, slot_stats = get_raider_slots(cur, rid)
+    slot_names, slot_stats = get_raider_slots(cur, rid, fill=True)
     lvl = slot_names[None][0]
     id_lvl_name = '%d - [%d] %s' % ((rid,) + slot_names[None])
 
@@ -445,16 +456,12 @@ def calc_best_gear(db, rid, count, url, mobs):
     wins = ' '.join(fmt_percentage(sim.fetch_one(cur, rid, m)[2],
                                    moblen, bold=True)
                     for m in mobs)
-    print(fmt_base('%-*s  %s\n%-*s  %s\n%-*s  %s\n%-*s  %s\n%-*s  %s\n%-*s  %s  %s\n' % (
+    print(fmt_base(('%-*s  %s\n' * 5 + '%-*s  %s  %s\n') % (
         namelen, id_lvl_name, fmtstats(slot_stats[None]),
-        namelen, slot_names.get('main_hand', 'nothing'),
-        fmtstats(slot_stats.get('main_hand', (0,) * 6)),
-        namelen, slot_names.get('dress', 'nothing'),
-        fmtstats(slot_stats.get('dress', (0,) * 6)),
-        namelen, slot_names.get('finger', 'nothing'),
-        fmtstats(slot_stats.get('finger', (0,) * 6)),
-        namelen, slot_names.get('neck', 'nothing'),
-        fmtstats(slot_stats.get('neck', (0,) * 6)),
+        namelen, slot_names['main_hand'], fmtstats(slot_stats['main_hand']),
+        namelen, slot_names['dress'], fmtstats(slot_stats['dress']),
+        namelen, slot_names['finger'], fmtstats(slot_stats['finger']),
+        namelen, slot_names['neck'], fmtstats(slot_stats['neck']),
         namelen, '', fmtstats(cur_stats_line), wins)))
 
     for combo_row, diff_row, weap_row, dress_row, ring_row, neck_row in combos[:count]:
@@ -531,7 +538,7 @@ class RaiderGearReport(TabularReport):
             name = row[0]
             slot = row[1]
             item_stats = row[2:]
-            old_slot_stats = slot_stats.get(slot, (0, 0, 0, 0, 0, 0))
+            old_slot_stats = slot_stats.get(slot, nostats)
             new_raw_stats = (i - j + k for i, j, k in
                              zip(raw_stats, old_slot_stats, item_stats))
             new_comb_stats = skew_stats(new_raw_stats)
