@@ -733,8 +733,8 @@ class QuestReport(TabularReport):
             ('name', 'Raider', 'str', False),
             ('raids', 'Raids', 'positive_count', True),
             ('quest', 'Quest', 'str', False),
-            ('started', 'Started', 'epoch_seconds', False),
-            ('homenow', 'Home Now', 'epoch_seconds', False)]
+            ('speed', 'Speed', 'delta_seconds', False),
+            ('started', 'Started', 'epoch_seconds', False)]
         for i in range(self._first_reward, self._last_reward + 1):
             colspec.extend((
                 ('reward%d' % i, 'Reward %d' % i, 'epoch_seconds', True),
@@ -767,8 +767,8 @@ class QuestReport(TabularReport):
                    '[%d] %s' % (level, name),
                    raids,
                    cf.get_quest_name(address=addr),
-                   started,
-                   now_secs + ((now_secs - started) / retdiv)]
+                   reward,
+                   started]
 
             next = now_secs + (reward - ((now_secs - started) % reward))
             next += (self._first_reward - 1) * reward
@@ -785,7 +785,7 @@ def show_quest_info(db, ids, rewards, showall=False):
     if not showall:
         filter_idx = report.col_idx['raids']
         tbl = [i for i in tbl if i[filter_idx] > 0]
-    sort_idx = report.col_idx['homenow'] + 1
+    sort_idx = report.col_idx['started'] + 1
     tbl.sort(key=lambda v: v[sort_idx])
     adj = datetime.datetime.now().timestamp() - \
         datetime.datetime.utcnow().timestamp()
