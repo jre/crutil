@@ -210,7 +210,7 @@ class TabularReport():
     def colcount(self):
         return len(self.columns)
 
-    def print(self, raw_tbl, fmt):
+    def print(self, raw_tbl, fmt, fancy=None):
         str_tbl = [self.columns]
         str_tbl.extend(tuple(fmt[self.coltypes[i]](v)
                              for i, v in enumerate(r)) for r in raw_tbl)
@@ -220,10 +220,13 @@ class TabularReport():
                 if len(row[i]) > widths[i]:
                     widths[i] = len(row[i])
 
-        for row in str_tbl:
-            print(''.join(('%*s%s' if self.right_align[i] else '%-*s%s') % (
-                widths[i], row[i], self.col_sep[i])
-                          for i in range(self.colcount)))
+        for row_idx, row in enumerate(str_tbl):
+            fld = [('%*s' if self.right_align[i] else '%-*s') % (
+                widths[i], row[i]) for i in range(self.colcount)]
+            print(''.join(((fancy[c][row_idx-1] if fancy else '%s') % (fld[c],)
+                           if fancy and c in fancy and row_idx > 0
+                           else fld[c]) + self.col_sep[c]
+                          for c in range(self.colcount)))
 
     def write_csv(self, csvw, raw_tbl):
         csvw.writerow(self.columns)
@@ -730,6 +733,58 @@ def call_fight_simulator(url, db, ids, mobs, count=1000):
                            for i in range(report.colcount)))
 
 
+def groupby_timespan(times, mins=30):
+    span = mins * 60
+    groups = []
+    for t_idx, t in enumerate(times):
+        grouped = False
+        for idx in range(len(groups)):
+            low, high, members = groups[idx]
+            if low - span <= t and high + span >= t:
+                members.add(t_idx)
+                if t < low:
+                    groups[idx][0] = t
+                if t > high:
+                    groups[idx][1] = t
+                grouped = True
+                break
+        if not grouped:
+            groups.append([t, t, set((t_idx,))])
+
+    groups.sort()
+    for idx in range(len(groups)):
+        if idx >= len(groups):
+            break
+        low, high, members = groups[idx]
+        while idx + 1 < len(groups) and high + span > groups[idx+1][0]:
+            members.update(groups[idx+1][2])
+            groups[idx][1] = groups[idx+1][1]
+            groups.pop(idx+1)
+    return [g[2] for g in groups], t_idx + 1
+
+
+def colorize_times(times):
+    colors = (31, 34, 32, 35, 33, 36, 91, 94, 92, 95, 93, 96)
+    next_color_idx = 0
+    groups_iter, rowcount = groupby_timespan(times)
+    ret = ['%s'] * rowcount
+    if bland:
+        return ret
+
+    for group in groups_iter:
+        color_idx = next_color_idx
+        next_color_idx += 1
+        if color_idx < len(colors):
+            fmt = '\033[0;' + str(colors[color_idx]) + 'm%s\033[0m'
+        elif color_idx < len(colors) * 2:
+            fmt = '\033[1;' + str(colors[color_idx/2]) + 'm%s\033[0m'
+        else:
+            continue
+        for idx in group:
+            ret[idx] = fmt
+    return ret
+
+
 class QuestReport(TabularReport):
     def __init__(self, reward_range=1):
         assert reward_range[0] >= 1 and reward_range[1] >= 1 and \
@@ -796,6 +851,9 @@ def show_quest_info(db, ids, rewards, showall=False):
         tbl = [i for i in tbl if i[filter_idx] > 0]
     sort_idx = report.col_idx['started'] + 1
     tbl.sort(key=lambda v: v[sort_idx])
+    colors = {c: colorize_times(r[c] for r in tbl)
+              for c in (sort_idx + i * 2
+                        for i in range(rewards[1] - rewards[0] + 1))}
     adj = datetime.datetime.now().timestamp() - \
         datetime.datetime.utcnow().timestamp()
     fmt = {
@@ -804,7 +862,7 @@ def show_quest_info(db, ids, rewards, showall=False):
         'epoch_seconds': lambda v: fmt_timesecs_nicely(v, adj),
         'positive_count': fmt_positive_count,
     }
-    report.print(tbl, fmt)
+    report.print(tbl, fmt, colors)
 
 
 def main():
