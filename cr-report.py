@@ -11,6 +11,7 @@ import requests
 cr_conf = __import__('cr-conf')
 cf = cr_conf.conf
 ampm = False
+bland = not sys.stdout.isatty()
 main_slots = ('main_hand', 'dress', 'finger', 'neck')
 nostats = (0, 0, 0, 0, 0, 0)
 
@@ -579,13 +580,14 @@ def show_raider(db, rid):
 
 
 def fmt_stat_diff(stat, width):
+    color = None
     if stat > 0.005:
         color = 32
     elif stat < -0.005:
         color = 31
-    else:
+    if color is None or bland:
         return '%*.1f' % (width, stat)
-    return '\033[0;%dm%s\033[0m' % (color, '%+*.2f' % (width, stat))
+    return '\033[0;%dm%+*.1f\033[0m' % (color, width, stat)
 
 
 def fmt_percentage(num, width=0, bold=False):
@@ -595,15 +597,22 @@ def fmt_percentage(num, width=0, bold=False):
         color = 33  # yellow
     else:
         color = 35  # magenta
+    if bland:
+        return '%*.0f%%' % (width, num,)
     boldstr = ';1' if bold else ''
     return '\033[0%s;%dm%*.0f%%\033[0m' % (boldstr, color, width, num)
 
 
 def fmt_hdr(names, width):
-    return '\033[0;1m%s\033[0m' % ' '.join('%*s' % (width, i) for i in names)
+    hdrstr = ' '.join('%*s' % (width, i) for i in names)
+    if bland:
+        return hdrstr
+    return '\033[0;1m%s\033[0m' % (hdrstr,)
 
 
 def fmt_base(text):
+    if bland:
+        return text
     return '\033[0;1m%s\033[0m' % (text,)
 
 
