@@ -736,6 +736,7 @@ def call_fight_simulator(url, db, ids, mobs, count=1000):
 def groupby_timespan(times, mins=30):
     span = mins * 60
     groups = []
+    t_idx = 0
     for t_idx, t in enumerate(times):
         grouped = False
         for idx in range(len(groups)):
