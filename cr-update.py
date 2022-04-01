@@ -10,6 +10,12 @@ cr_conf = __import__('cr-conf')
 cf = cr_conf.conf
 cr_report = __import__('cr-report')
 
+schema_version = 1
+
+
+class DBVersionError(Exception):
+    pass
+
 
 def noop(*a, **kw):
     pass
@@ -27,8 +33,28 @@ def periodic_print(section=None, message=None):
         print(' %s' % (section,))
 
 
+def checkdb(db):
+    cur = db.cursor()
+    db_vers = None
+    try:
+        cur.execute('SELECT value FROM meta WHERE name = ?',
+                    ('schema-version',))
+        db_vers = (list(cur.fetchall()) + [None])[0][0]
+    except sqlite3.OperationalError:
+        pass
+    if db_vers is not None and db_vers != schema_version:
+        raise DBVersionError('expected DB schema version %d but found %d' % (
+            schema_version, db_vers))
+
+
 def setupdb(db):
     cur = db.cursor()
+
+    cur.execute('''CREATE TABLE IF NOT EXISTS meta(
+        name VARCHAR(255) PRIMARY KEY,
+        value INTEGER)''')
+    cur.execute('INSERT OR IGNORE INTO meta (name, value) VALUES (?, ?)',
+                ('schema-version', schema_version))
 
     cur.execute('''CREATE TABLE IF NOT EXISTS raiders(
         id INTEGER PRIMARY KEY,
@@ -90,11 +116,6 @@ def setupdb(db):
         returns_on INTEGER,
         reward_time INTEGER,
         FOREIGN KEY(raider) REFERENCES raiders(id))''')
-
-    cur.execute('SELECT COUNT(cid) FROM PRAGMA_TABLE_INFO(?) where name = ?',
-                ('quests', 'reward_time'))
-    if cur.fetchone()[0] == 0:
-        cur.execute('ALTER TABLE quests ADD COLUMN reward_time INTEGER')
 
     db.commit()
 
@@ -531,7 +552,7 @@ def main():
         sys.exit(1)
 
     cf.makedirs()
-    db = sqlite3.connect(cf.db_path)
+    db = cf.opendb()
     setupdb(db)
 
     raider = None

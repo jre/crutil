@@ -190,6 +190,13 @@ class CRConf():
             raise ValueError('not questing contract address: %s' % (address,))
         return self._quest_names[name]
 
+    def opendb(self):
+        import sqlite3
+        cru = __import__('cr-update')
+        db = sqlite3.connect(self.db_path)
+        cru.checkdb(db)
+        return db
+
 
 conf = CRConf()
 

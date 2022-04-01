@@ -1,5 +1,4 @@
 #!./venv/bin/python
-import sqlite3
 import argparse
 import csv
 import math
@@ -879,7 +878,7 @@ def main():
     if not cf.load_config():
         print('error: please run ./cr-conf.py to configure')
         sys.exit(1)
-    db = sqlite3.connect(cf.db_path)
+    db = cf.opendb()
 
     def raider(v):
         ids, trusted = findraider(db, v)
