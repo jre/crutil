@@ -519,10 +519,10 @@ def findraider(db, ident):
     return rid, (cur.fetchone()[0] > 0)
 
 
-def import_or_update(db, raider=None, gear=True, timing=True,
-                     periodic=noop, started_at=None):
+def import_or_update(db, started_at=None, raider=None, gear=True,
+                     recruiting=True, questing=True, periodic=noop):
     cur = db.cursor()
-    questing = None
+    questers = None
     if started_at is None:
         started_at = datetime.datetime.utcnow()
 
@@ -531,16 +531,17 @@ def import_or_update(db, raider=None, gear=True, timing=True,
         cur.execute('INSERT OR REPLACE INTO meta (name, value) VALUES (?, ?)',
                     ('snapshot-started', int(started_at.timestamp())))
         db.commit()
-        ids, questing = import_all_raiders(db, periodic=periodic)
+        ids, questers = import_all_raiders(db, periodic=periodic)
     else:
         periodic('Updating raider %d' % (raider,))
         ids = (raider,)
         import_one_raider(db, raider, periodic=periodic)
     if gear:
         import_raider_gear(db, periodic=periodic)
-    if timing:
+    if recruiting:
         import_raider_recruitment(db, ids, periodic=periodic)
-        import_raider_quests(db, ids, questing_ids=questing, periodic=periodic)
+    if questing:
+        import_raider_quests(db, ids, questing_ids=questers, periodic=periodic)
 
     finished_at = datetime.datetime.utcnow()
     cur.execute('INSERT OR REPLACE INTO meta (name, value) VALUES (?, ?)',
@@ -572,9 +573,12 @@ def main():
                         help='Update only a single raider')
     parser.add_argument('-G', dest='gear', default=True, action='store_false',
                         help='Skip import from CR guru')
-    parser.add_argument('-T', dest='times', default=True, action='store_false',
-                        help='Skip retrieving timing information')
-    parser.add_argument
+    parser.add_argument('-R', dest='recruiting',
+                        default=True, action='store_false',
+                        help='Skip retrieving recruiting information')
+    parser.add_argument('-Q', dest='questing',
+                        default=True, action='store_false',
+                        help='Skip retrieving questing information')
     args = parser.parse_args()
 
     if not cf.load_config():
@@ -589,7 +593,8 @@ def main():
     if args.raider is not None:
         raider = ensure_raider_ids(db, args.raider, parser.print_usage)
 
-    import_or_update(db, raider=raider, gear=args.gear, timing=args.times,
+    import_or_update(db, raider=raider, gear=args.gear,
+                     recruiting=args.recruiting, questing=args.questing,
                      periodic=periodic_print)
 
 
