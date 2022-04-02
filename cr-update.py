@@ -478,16 +478,19 @@ def import_raider_quests(db, idlist, questing_ids=None,
 
 
 def findraider(db, ident):
+    cur = db.cursor()
     try:
-        return int(ident), False
+        rid = int(ident)
     except ValueError:
-        cur = db.cursor()
         cur.execute('SELECT id FROM raiders WHERE lower(name) = ?',
                     (str(ident).lower(),))
         row = cur.fetchall()
         if len(row) > 0:
             return row[0][0], True
-    return None, False
+        else:
+            return None, False
+    cur.execute('SELECT COUNT(id) FROM raiders WHERE id = ?', (rid,))
+    return rid, (cur.fetchone()[0] > 0)
 
 
 def import_or_update(db, raider=None, gear=True, timing=True,
