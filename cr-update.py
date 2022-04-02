@@ -301,7 +301,7 @@ def iso_datetime_to_secs(isotime):
     return int(dt.timestamp())
 
 
-def import_raider_gear(db, rid=None, periodic=noop):
+def import_raider_gear(db, periodic=noop):
     periodic('Importing guru data', message='querying API')
     source = 'crguru'
     cur = db.cursor()
@@ -334,12 +334,7 @@ def import_raider_gear(db, rid=None, periodic=noop):
 
         for raider in data['data']['data']['raiders']:
             raider_id = raider['tokenId']
-            if rid is not None and rid != raider_id:
-                continue
             found.setdefault(raider_id, 0)
-            periodic(message='found %d items for %d - [%d] %s from %s' % (
-                len(raider['inventory']), raider_id, raider['level'],
-                raider['name'], raider['updatedAt']))
 
             periodic()
             for inv in raider['inventory']:
@@ -359,6 +354,9 @@ def import_raider_gear(db, rid=None, periodic=noop):
                     :dedup_id, :slot, :raider_id, :source)''', params)
                 periodic()
                 found[raider_id] += 1
+            periodic(message='found %d new items for %d - [%d] %s from %s' % (
+                found[raider_id], raider_id, raider['level'],
+                raider['name'], raider['updatedAt']))
 
             params = {
                 'raider': raider_id,
@@ -503,7 +501,7 @@ def import_or_update(db, raider=None, gear=True, timing=True,
         ids = (raider,)
         import_one_raider(db, raider, periodic=periodic)
     if gear:
-        import_raider_gear(db, raider, periodic=periodic)
+        import_raider_gear(db, periodic=periodic)
     if timing:
         import_raider_recruitment(db, ids, periodic=periodic)
         import_raider_quests(db, ids, questing_ids=questing, periodic=periodic)
