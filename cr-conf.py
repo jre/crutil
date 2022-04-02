@@ -4,7 +4,6 @@ import configparser
 import io
 import os
 import requests
-import datetime
 
 appname = 'crutil'
 
@@ -190,10 +189,10 @@ class CRConf():
             raise ValueError('not questing contract address: %s' % (address,))
         return self._quest_names[name]
 
-    def opendb(self):
+    def opendb(self, dbpath=None):
         import sqlite3
         cru = __import__('cr-update')
-        db = sqlite3.connect(self.db_path)
+        db = sqlite3.connect(self.db_path if dbpath is None else dbpath)
         cru.checkdb(db)
         return db
 

@@ -520,10 +520,17 @@ def findraider(db, ident):
 
 
 def import_or_update(db, raider=None, gear=True, timing=True,
-                     periodic=noop):
+                     periodic=noop, started_at=None):
+    cur = db.cursor()
     questing = None
+    if started_at is None:
+        started_at = datetime.datetime.utcnow()
+
     if raider is None:
         periodic('Updating all raiders')
+        cur.execute('INSERT OR REPLACE INTO meta (name, value) VALUES (?, ?)',
+                    ('snapshot-started', int(started_at.timestamp())))
+        db.commit()
         ids, questing = import_all_raiders(db, periodic=periodic)
     else:
         periodic('Updating raider %d' % (raider,))
@@ -534,6 +541,29 @@ def import_or_update(db, raider=None, gear=True, timing=True,
     if timing:
         import_raider_recruitment(db, ids, periodic=periodic)
         import_raider_quests(db, ids, questing_ids=questing, periodic=periodic)
+
+    finished_at = datetime.datetime.utcnow()
+    cur.execute('INSERT OR REPLACE INTO meta (name, value) VALUES (?, ?)',
+                ('snapshot-updated', int(finished_at.timestamp())))
+    if raider is None:
+        cur.execute('INSERT OR REPLACE INTO meta (name, value) VALUES (?, ?)',
+                    ('snapshot-finished', int(finished_at.timestamp())))
+    db.commit()
+
+
+def ensure_raider_ids(db, val, usage):
+    raider, trusted = findraider(db, val)
+    if raider is None:
+        print('No raider named "%s" found' % (val,))
+        usage()
+        sys.exit(1)
+    elif not trusted:
+        owned, questing = get_raider_ids(periodic=periodic_print)
+        if raider not in owned and raider not in questing:
+            print('raider %d not owned by %s' % (
+                raider, ' '.join(cf.nft_owners())))
+            sys.exit(1)
+    return raider
 
 
 def main():
@@ -557,17 +587,7 @@ def main():
 
     raider = None
     if args.raider is not None:
-        raider, trusted = findraider(db, args.raider)
-        if raider is None:
-            print('No raider named "%s" found' % (args.raider,))
-            parser.print_usage()
-            sys.exit(1)
-        elif not trusted:
-            owned, questing = get_raider_ids(periodic=periodic_print)
-            if raider not in owned and raider not in questing:
-                print('raider %d not owned by %s' % (
-                    raider, ' '.join(cf.nft_owners())))
-                sys.exit(1)
+        raider = ensure_raider_ids(db, args.raider, parser.print_usage)
 
     import_or_update(db, raider=raider, gear=args.gear, timing=args.times,
                      periodic=periodic_print)
