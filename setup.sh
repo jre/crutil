@@ -17,4 +17,4 @@ esac
 test -d venv || python3 -m venv venv
 export TMPDIR="${topdir}/venv/tmp"
 mkdir -p "$TMPDIR"
-./venv/bin/pip install appdirs requests supervisor web3
+./venv/bin/pip install appdirs flask flup requests supervisor web3

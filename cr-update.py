@@ -521,6 +521,7 @@ def findraider(db, ident):
 
 def import_or_update(db, started_at=None, raiders=None, basic=True, gear=True,
                      recruiting=True, questing=True, periodic=noop):
+    info = {'schema-version': schema_version}
     cur = db.cursor()
     questers = None
     need_finish = False
@@ -532,10 +533,13 @@ def import_or_update(db, started_at=None, raiders=None, basic=True, gear=True,
         cur.execute('INSERT OR REPLACE INTO meta (name, value) VALUES (?, ?)',
                     ('snapshot-started', int(started_at.timestamp())))
         db.commit()
+        info['snapshot-started'] = int(started_at.timestamp())
         need_finish = True
         raiders, questers = import_all_raiders(db, periodic=periodic)
     else:
         periodic('Updating raider(s) %s' % (raiders,))
+        cur.execute("SELECT value FROM meta WHERE name = 'snapshot-started'")
+        info['snapshot-started'] = cur.fetchone()[0]
         if basic:
             import_some_raiders(db, raiders, periodic=periodic)
     if gear:
@@ -549,11 +553,12 @@ def import_or_update(db, started_at=None, raiders=None, basic=True, gear=True,
     finished_at = datetime.datetime.utcnow()
     cur.execute('INSERT OR REPLACE INTO meta (name, value) VALUES (?, ?)',
                 ('snapshot-updated', int(finished_at.timestamp())))
+    info['snapshot-updated'] = int(finished_at.timestamp())
     if need_finish:
         cur.execute('INSERT OR REPLACE INTO meta (name, value) VALUES (?, ?)',
                     ('snapshot-finished', int(finished_at.timestamp())))
     db.commit()
-    return raiders
+    return info, raiders
 
 
 def ensure_raider_ids(db, val, usage):
