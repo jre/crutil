@@ -216,11 +216,11 @@ def import_all_raiders(db, periodic=noop):
     return ids, questing
 
 
-def import_one_raider(db, rid, periodic=noop):
+def import_some_raiders(db, rids, periodic=noop):
     periodic()
     cur = db.cursor()
     cur.execute('BEGIN TRANSACTION')
-    import_raiders(cur, (rid,), full=True, periodic=periodic)
+    import_raiders(cur, rids, full=True, periodic=periodic)
     db.commit()
     periodic()
 
@@ -519,37 +519,41 @@ def findraider(db, ident):
     return rid, (cur.fetchone()[0] > 0)
 
 
-def import_or_update(db, started_at=None, raider=None, gear=True,
+def import_or_update(db, started_at=None, raiders=None, basic=True, gear=True,
                      recruiting=True, questing=True, periodic=noop):
     cur = db.cursor()
     questers = None
-    if started_at is None:
-        started_at = datetime.datetime.utcnow()
+    need_finish = False
 
-    if raider is None:
+    if raiders is None:
+        if started_at is None:
+            started_at = datetime.datetime.utcnow()
         periodic('Updating all raiders')
         cur.execute('INSERT OR REPLACE INTO meta (name, value) VALUES (?, ?)',
                     ('snapshot-started', int(started_at.timestamp())))
         db.commit()
-        ids, questers = import_all_raiders(db, periodic=periodic)
+        need_finish = True
+        raiders, questers = import_all_raiders(db, periodic=periodic)
     else:
-        periodic('Updating raider %d' % (raider,))
-        ids = (raider,)
-        import_one_raider(db, raider, periodic=periodic)
+        periodic('Updating raider(s) %s' % (raiders,))
+        if basic:
+            import_some_raiders(db, raiders, periodic=periodic)
     if gear:
         import_raider_gear(db, periodic=periodic)
     if recruiting:
-        import_raider_recruitment(db, ids, periodic=periodic)
+        import_raider_recruitment(db, raiders, periodic=periodic)
     if questing:
-        import_raider_quests(db, ids, questing_ids=questers, periodic=periodic)
+        import_raider_quests(db, raiders, questing_ids=questers,
+                             periodic=periodic)
 
     finished_at = datetime.datetime.utcnow()
     cur.execute('INSERT OR REPLACE INTO meta (name, value) VALUES (?, ?)',
                 ('snapshot-updated', int(finished_at.timestamp())))
-    if raider is None:
+    if need_finish:
         cur.execute('INSERT OR REPLACE INTO meta (name, value) VALUES (?, ?)',
                     ('snapshot-finished', int(finished_at.timestamp())))
     db.commit()
+    return raiders
 
 
 def ensure_raider_ids(db, val, usage):
@@ -589,11 +593,11 @@ def main():
     db = cf.opendb()
     setupdb(db)
 
-    raider = None
+    raiders = None
     if args.raider is not None:
-        raider = ensure_raider_ids(db, args.raider, parser.print_usage)
+        raiders = ensure_raider_ids(db, args.raider, parser.print_usage),
 
-    import_or_update(db, raider=raider, gear=args.gear,
+    import_or_update(db, raiders=raiders, gear=args.gear,
                      recruiting=args.recruiting, questing=args.questing,
                      periodic=periodic_print)
 
