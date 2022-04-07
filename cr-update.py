@@ -396,9 +396,11 @@ def import_raider_recruitment(db, idlist, full=False, periodic=noop):
 
         utcnow_secs = datetime.datetime.utcnow().timestamp()
         if next_time is None or next_time < utcnow_secs:
-            # XXX does this return a negative when a recruit is available?
-            delta = recruiting.nextRecruitTime(rid).call()
-            next_time = utcnow_secs + delta
+            if recruiting.canRaiderRecruit(rid).call():
+                next_time = 0
+            else:
+                delta = recruiting.nextRecruitTime(rid).call()
+                next_time = utcnow_secs + delta
             periodic()
             changed = True
 
