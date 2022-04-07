@@ -44,9 +44,9 @@ class CRConf():
         }
         self._contracts = {v: k for k, v in self._contract_names.items()}
         self._quest_names = {
-            'sporebark-quest': 'Fungal Infestation',
-            'grimweed-quest': 'The Hunt for Grimweed',
-            'newt-quest': 'Newt Slayer',
+            'sporebark-quest': ('Sporebark', 'Fungal Infestation'),
+            'grimweed-quest': ('Grimweed', 'The Hunt for Grimweed'),
+            'newt-quest': ('Newt', 'Newt Slayer'),
         }
         self._quests = {self._contracts[k]: v
                         for k, v in self._quest_names.items()}
@@ -178,7 +178,7 @@ class CRConf():
         abi = self._get_eth_abi(name)
         return w3.eth.contract(address=self._contracts[name], abi=abi)
 
-    def get_quest_name(self, name=None, address=None):
+    def get_quest_name(self, name=None, address=None, short=False):
         assert (name is None) != (address is None)
         if name is None:
             if address not in self._contract_names:
@@ -187,7 +187,7 @@ class CRConf():
         assert name in self._contracts
         if name not in self._quest_names:
             raise ValueError('not questing contract address: %s' % (address,))
-        return self._quest_names[name]
+        return self._quest_names[name][0 if short else 1]
 
     def opendb(self, dbpath=None):
         import sqlite3

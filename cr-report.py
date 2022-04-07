@@ -835,7 +835,7 @@ class QuestReport(TabularReport):
             ret = [rid,
                    '[%d] %s' % (level, name),
                    raids,
-                   cf.get_quest_name(address=addr),
+                   cf.get_quest_name(address=addr, short=True),
                    reward,
                    started]
 
