@@ -1,6 +1,7 @@
 #!./venv/bin/python
 import sqlite3
 import argparse
+import csv
 import math
 import sys
 import datetime
@@ -228,10 +229,12 @@ class TabularReport():
                            else fld[c]) + self.col_sep[c]
                           for c in range(self.colcount)))
 
-    def write_csv(self, csvw, raw_tbl):
+    def write_csv(self, fh, raw_tbl, fmt):
+        csvw = csv.writer(fh)
         csvw.writerow(self.columns)
         for row in raw_tbl:
-            csvw.writerow(row)
+            csvw.writerow(tuple(fmt[self.coltypes[i]](v)
+                                for i, v in enumerate(row)))
 
 
 class RaiderListReport(TabularReport):
@@ -846,7 +849,7 @@ class QuestReport(TabularReport):
             yield ret
 
 
-def show_quest_info(db, ids, rewards, showall=False):
+def show_quest_info(db, ids, rewards, showall=False, csvfile=None):
     report = QuestReport(reward_range=rewards)
     tbl = list(report.fetch(db, ids))
     if not showall:
@@ -865,7 +868,11 @@ def show_quest_info(db, ids, rewards, showall=False):
         'epoch_seconds': lambda v: fmt_timesecs_nicely(v, adj),
         'positive_count': fmt_positive_count,
     }
-    report.print(tbl, fmt, colors)
+    if csvfile is not None:
+        with open(csvfile, 'w') as fh:
+            report.write_csv(fh, tbl, fmt)
+    else:
+        report.print(tbl, fmt, colors)
 
 
 def main():
@@ -958,6 +965,8 @@ def main():
     p_quest.add_argument('-v', dest='verbose',
                          default=False, action='store_true',
                          help='Show raiders without raids left')
+    p_quest.add_argument('-C', dest='csvfile',
+                         help='Output a CSV file')
 
     args = parser.parse_args()
 
@@ -1002,7 +1011,8 @@ def main():
     elif args.cmd == 'best':
         calc_best_gear(db, rids[0], args.count, args.url, args.mob)
     elif args.cmd == 'quests':
-        show_quest_info(db, rids, rewards=args.count, showall=args.verbose)
+        show_quest_info(db, rids, rewards=args.count,
+                        showall=args.verbose, csvfile=args.csvfile)
     elif args.cmd == 'sim':
         url = args.url
         if ':' not in url and '/' not in url:
