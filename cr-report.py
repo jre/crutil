@@ -299,7 +299,7 @@ def get_raider_info(cur, rid):
         FROM raiders WHERE id = ?''', (rid,))
     rows = tuple(cur.fetchall())
     if len(rows) == 0:
-        return None, None
+        return None, None, None
     return (rows[0][0], rows[0][1], rows[0][2:])
 
 

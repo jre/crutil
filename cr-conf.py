@@ -159,9 +159,11 @@ class CRConf():
 
     def get_polygon_web3(self):
         if self._polygon_web3 is None:
-            import web3
-            self._polygon_web3 = web3.Web3(web3.Web3.HTTPProvider('%s/%s' % (
-                self.alchemy_api_url, self.alchemy_api_key)))
+            from web3 import Web3
+            rkw = {'timeout': 60}
+            self._polygon_web3 = Web3(Web3.HTTPProvider('%s/%s' % (
+                self.alchemy_api_url, self.alchemy_api_key),
+                                                        request_kwargs=rkw))
         return self._polygon_web3
 
     def get_eth_contract(self, name=None, address=None):

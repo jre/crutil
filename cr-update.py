@@ -209,8 +209,8 @@ def import_raiders(cur, all_ids, full=False, periodic=noop):
         datetime.datetime.utcnow())
     periodic('Importing raider data from CR API')
 
-    for first in range(0, len(all_ids), 100):
-        chunk_ids = all_ids[first:first+100]
+    for first in range(0, len(all_ids), 50):
+        chunk_ids = all_ids[first:first+50]
         periodic(message='fetching %d raiders' % (len(chunk_ids),))
         r = requests.get('%s/raiders/' % (cf.cr_api_url,),
                          params={'ids[]': chunk_ids})
@@ -259,7 +259,8 @@ def import_raider_full(cur, raider_id, periodic=noop):
     params = {
         'raider': raider_id,
         'remaining': data['raidsRemaining'],
-        'last_raid': iso_datetime_to_secs(data['lastRaided']),
+        'last_raid': (iso_datetime_to_secs(data['lastRaided'])
+                      if 'lastRaided' in data else 0),
     }
     cur.execute('''INSERT INTO raids (raider, remaining, last_raid)
         VALUES (:raider, :remaining, :last_raid)
@@ -288,12 +289,13 @@ def import_raider_full(cur, raider_id, periodic=noop):
         if equipped:
             equipped_ids.append(cur.lastrowid)
 
-    ne_equipped = ' AND '.join('local_id != %d' % i for i in equipped_ids)
+    ne_equipped = ''.join(' AND local_id != %d' % i for i in equipped_ids)
     cur.execute('''UPDATE gear_localid SET equipped = FALSE
-        WHERE raider_id = ? AND %s''' % (ne_equipped,), (raider_id,))
-    eq_equipped = ' OR '.join('local_id = %d' % i for i in equipped_ids)
-    cur.execute('''UPDATE gear_localid SET equipped = TRUE
-        WHERE %s''' % (eq_equipped,))
+        WHERE raider_id = ? %s''' % (ne_equipped,), (raider_id,))
+    if equipped_ids:
+        eq_equipped = ' OR '.join('local_id = %d' % i for i in equipped_ids)
+        cur.execute('''UPDATE gear_localid SET equipped = TRUE
+            WHERE %s''' % (eq_equipped,))
 
 
 def iso_datetime_to_secs(isotime):
@@ -358,15 +360,16 @@ def import_raider_gear(db, periodic=noop):
                 found[raider_id], raider_id, raider['level'],
                 raider['name'], raider['updatedAt']))
 
-            params = {
-                'raider': raider_id,
-                'last_endless': iso_datetime_to_secs(raider['lastEndless']),
-            }
-            cur.execute('''INSERT INTO raids (raider, last_endless)
-                VALUES (:raider, :last_endless)
-                ON CONFLICT (raider) DO UPDATE
-                SET last_endless = :last_endless
-                WHERE raider = :raider''', params)
+            if 'lastEndless' in raider:
+                params = {
+                    'raider': raider_id,
+                    'last_endless': iso_datetime_to_secs(raider['lastEndless']),
+                }
+                cur.execute('''INSERT INTO raids (raider, last_endless)
+                    VALUES (:raider, :last_endless)
+                    ON CONFLICT (raider) DO UPDATE
+                    SET last_endless = :last_endless
+                    WHERE raider = :raider''', params)
     periodic()
     db.commit()
     periodic(message='Found %d new gear items for %d raiders' % (
