@@ -627,7 +627,8 @@ def findraider(db, ident):
 
     trusted = True
     ids = []
-    for raider in ' '.join(ident.split(',')).split():
+    for raider in ident.split(','):
+        raider = raider.strip()
         try:
             ids.append(int(ident))
             trusted = False
