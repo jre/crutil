@@ -39,11 +39,13 @@ class CRConf():
             '0x5A4fCdD54D483808080e0588c1E7d73e2a8AfdA8': 'questing-raiders',
             '0x5b0e5ae346a919c39fc8553b94d67599fd5e591d': 'raider-info',
             '0x32ADBBA23B00AA40701c5423466E4E57fDb4fe32': 'recruiting',
+            '0xc81f43Eb261c1708bFfA84D75DDd945341723f1F': 'sporebark-quest',
             '0xe193364370F0E2923b41a8d1850F442B45E5ccA7': 'grimweed-quest',
             '0xF001508171344A4bc90fdA37890e343749d5D216': 'recruiting-history',
         }
         self._contracts = {v: k for k, v in self._contract_names.items()}
         self._quest_names = {
+            'sporebark-quest': 'Fungal Infestation',
             'grimweed-quest': 'The Hunt for Grimweed',
             'newt-quest': 'Newt Slayer',
         }
