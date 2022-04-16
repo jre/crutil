@@ -1,12 +1,9 @@
 import argparse
-import contextlib
 import datetime
 import json
 import os
 import queue
-import subprocess
 import sys
-import tempfile
 import threading
 import time
 import traceback
@@ -16,7 +13,7 @@ from flup.server.fcgi import WSGIServer
 
 cr_conf = __import__('cr-conf')
 cf = cr_conf.conf
-cr_update = __import__('cr-update')
+cru = __import__('cr-update')
 
 
 latest = {}
@@ -47,7 +44,8 @@ def update_latest(info):
         latest = info
         if latest_file is None:
             return
-        with permatempfile(latest_file, suffix='.json', binary=False) as fh:
+        with cru.permatempfile(latest_file, suffix='.json',
+                               binary=False) as fh:
             json.dump(info, fh)
 
 
@@ -110,18 +108,6 @@ def status_generator_response(status_queue):
     return resp
 
 
-@contextlib.contextmanager
-def permatempfile(dest, suffix=None, mode=0o644, binary=True):
-    destdir, destfile = os.path.split(dest)
-    tmp = tempfile.NamedTemporaryFile(
-        mode=('w+b' if binary else 'w+'), delete=False,
-        dir=destdir, prefix='.tmp-', suffix=suffix)
-    yield tmp
-    tmp.close()
-    os.chmod(tmp.name, mode)
-    os.rename(tmp.name, dest)
-
-
 class BaseThread(threading.Thread):
     def __init__(self, name, workdir, wwwdir, baseurlpath):
         super().__init__(name=name)
@@ -137,7 +123,7 @@ class BaseThread(threading.Thread):
     def _dbdump_filename(self, when):
         when = datetime.datetime.fromtimestamp(when)
         return 'raiders-v%d-%sZ.sqlite.gz' % (
-            cr_update.schema_version, when.isoformat(timespec='seconds'))
+            cru.schema_version, when.isoformat(timespec='seconds'))
 
     def _periodic(self, section=None, message=None):
         if section:
@@ -150,14 +136,14 @@ class BaseThread(threading.Thread):
 
     def _update_db(self, db_path, params={}):
         db = cf.opendb(db_path)
-        cr_update.setupdb(db)
+        cru.setupdb(db)
         self._periodic()
 
         params['periodic'] = self._periodic
-        info, idlist = cr_update.import_or_update(db, **params)
+        info, idlist = cru.import_or_update(db, **params)
         dumpfile = self._dbdump_filename(info['snapshot-updated'])
         info['path'] = '%s/%s' % (self._baseurlpath, dumpfile)
-        gzip_to(db_path, self._wwwdir, dumpfile, periodic=self._periodic)
+        cru.gzip_to(db_path, self._wwwdir, dumpfile, periodic=self._periodic)
         update_latest(info)
         return info, idlist
 
@@ -235,17 +221,6 @@ class UpdateThread(BaseThread):
             self.__status.put(msg)
 
 
-def gzip_to(srcpath, destdir, destname, periodic=cr_update.noop):
-    with permatempfile(os.path.join(destdir, destname),
-                       suffix='.sqlite.gz', mode=0o444) as tmp:
-        periodic('Compressing database', message='to temp file')
-        subprocess.run(('gzip', '-9cn', srcpath),
-                       stdin=subprocess.DEVNULL,
-                       stdout=tmp.fileno(),
-                       check=True)
-    periodic(message='to %s' % (destname,))
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('dbdir', help='Directory to store db files')
@@ -264,7 +239,7 @@ def main():
     workdir = os.path.expanduser('~/crudb-workdir')
     os.makedirs(workdir, exist_ok=True)
     load_latest(os.path.join(workdir, 'latest.json'))
-    all_raider_ids.update(*cr_update.get_raider_ids())
+    all_raider_ids.update(*cru.get_raider_ids())
 
     global rebuilder, updater
     thrp = {'workdir': workdir, 'wwwdir': args.dbdir,

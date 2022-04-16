@@ -1,10 +1,14 @@
 #!./venv/bin/python
-import requests
-import sqlite3
 import argparse
-import sys
+import contextlib
 import datetime
 import json
+import os
+import requests
+import sqlite3
+import subprocess
+import sys
+import tempfile
 
 cr_conf = __import__('cr-conf')
 cf = cr_conf.conf
@@ -118,6 +122,42 @@ def setupdb(db):
         FOREIGN KEY(raider) REFERENCES raiders(id))''')
 
     db.commit()
+
+
+@contextlib.contextmanager
+def permatempfile(dest, suffix=None, mode=0o644, binary=True):
+    destdir, destfile = os.path.split(dest)
+    tmp = tempfile.NamedTemporaryFile(
+        mode=('w+b' if binary else 'w+'), delete=False,
+        dir=destdir, prefix='.tmp-', suffix=suffix)
+    yield tmp
+    tmp.close()
+    os.chmod(tmp.name, mode)
+    os.rename(tmp.name, dest)
+
+
+def mv_to(srcpath, destpath):
+    subprocess.run(('mv', srcpath, destpath), check=True)
+
+
+def gzip_to(srcpath, destdir, destname, periodic=noop):
+    with permatempfile(os.path.join(destdir, destname), mode=0o444) as tmp:
+        periodic('Compressing')
+        subprocess.run(('gzip', '-9cn', srcpath),
+                       stdin=subprocess.DEVNULL,
+                       stdout=tmp.fileno(),
+                       check=True)
+    periodic(message='to %s' % (destname,))
+
+
+def gzip_from(srcpath, destdir, destname, periodic=noop):
+    with permatempfile(os.path.join(destdir, destname), mode=0o444) as tmp:
+        periodic('Decompressing')
+        subprocess.run(('gzip', '-cd', srcpath),
+                       stdin=subprocess.DEVNULL,
+                       stdout=tmp.fileno(),
+                       check=True)
+    periodic(message='to %s' % (destname,))
 
 
 def ensure_dedup_gear(cur, name_stats):
@@ -576,10 +616,86 @@ def ensure_raider_ids(db, val, usage):
     return raider
 
 
+def request_update(raiders, basic=True, gear=True, recruiting=True,
+                   questing=True, periodic=noop, forcelocal=None):
+    if not cf.can_update_remote or forcelocal:
+        db = cf.opendb()
+        import_or_update(db, raiders=raiders, basic=basic, gear=gear,
+                         recruiting=recruiting, questing=questing,
+                         periodic=periodic)
+        return db
+
+    url = cf.crutil_api_url.rstrip('/')
+    params = {'apikey': cf.crutil_api_key}
+    if raiders is None:
+        periodic('Rebuilding')
+        r = requests.get(url + '/rebuild', params, stream=True)
+    else:
+        periodic('Updating')
+        params['ids[]'] = tuple(raiders)
+        r = requests.get(url + '/update', params, stream=True)
+    for line in r.iter_lines():
+        periodic(message=line.decode())
+
+    maybe_download_update(periodic=periodic)
+    return cf.opendb()
+
+
+def download_and_install_snapshot(url, periodic=noop):
+    with tempfile.TemporaryDirectory(prefix='crutil') as tmp:
+        gzpath = os.path.join(tmp, 'raiders.sqlite.gz')
+        dbfile = 'raiders.sqlite'
+        dbpath = os.path.join(tmp, dbfile)
+        periodic(message='downloading %s' % (url,))
+        with open(gzpath, 'wb') as gzfh:
+            r = requests.get(url)
+            for data in r.iter_content(chunk_size=16384):
+                gzfh.write(data)
+        gzip_from(gzpath, tmp, dbfile, periodic=periodic)
+        cf.opendb(dbpath)
+        os.chmod(dbpath, 0o644)
+        mv_to(dbpath, cf.db_path)
+
+
+def maybe_download_update(periodic=noop):
+    current = {'snapshot-started': 0, 'snapshot-updated': 0}
+    try:
+        db = cf.opendb()
+        cur = db.cursor()
+        cur.execute('SELECT name, value FROM meta WHERE name = ? OR name = ?',
+                    ('snapshot-started', 'snapshot-updated'))
+        current.update(cur.fetchall())
+    except sqlite3.OperationalError:
+        pass
+    r = requests.get(cf.crutil_api_url.rstrip('/') + '/latest')
+    latest = r.json()
+
+    if not latest:
+        return
+    elif latest['schema-version'] > schema_version:
+        print('Latest database schema is too new for this code, try git pull?')
+        sys.exit(1)
+    elif latest['schema-version'] < schema_version:
+        print('Latest database schema is too old for this code')
+        sys.exit(1)
+    elif (latest['snapshot-started'] > current['snapshot-started'] or
+          (latest['snapshot-started'] == current['snapshot-started'] and
+           latest['snapshot-updated'] > current['snapshot-updated'])):
+        periodic('Updating database', 'from %d/%d to %d/%d' % (
+            current['snapshot-started'], current['snapshot-updated'],
+            latest['snapshot-started'], latest['snapshot-updated']))
+        download_and_install_snapshot(latest['url'], periodic=periodic)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-r', dest='raider',
                         help='Update only a single raider')
+    parser.add_argument('-U', dest='nodownload', action='store_true',
+                        help='Do not download database updates')
+    parser.add_argument('-L', dest='local',
+                        default=None, action='store_true',
+                        help='Perform database update locally')
     parser.add_argument('-G', dest='gear', default=True, action='store_false',
                         help='Skip import from CR guru')
     parser.add_argument('-R', dest='recruiting',
@@ -589,12 +705,19 @@ def main():
                         default=True, action='store_false',
                         help='Skip retrieving questing information')
     args = parser.parse_args()
+    if args.local and not args.nodownload:
+        args.nodownload = True
 
     if not cf.load_config():
         print('error: please run ./cr-conf.py to configure')
         sys.exit(1)
+    if not cf.can_update_local and args.local:
+        print('error: please run ./cr-conf.py to configure local updates')
+        sys.exit(1)
 
     cf.makedirs()
+    if cf.can_update_remote and not args.nodownload:
+        maybe_download_update(periodic=periodic_print)
     db = cf.opendb()
     setupdb(db)
 
@@ -602,9 +725,9 @@ def main():
     if args.raider is not None:
         raiders = ensure_raider_ids(db, args.raider, parser.print_usage),
 
-    import_or_update(db, raiders=raiders, gear=args.gear,
-                     recruiting=args.recruiting, questing=args.questing,
-                     periodic=periodic_print)
+    request_update(raiders, gear=args.gear, recruiting=args.recruiting,
+                   questing=args.questing, periodic=periodic_print,
+                   forcelocal=args.local)
 
 
 if __name__ == '__main__':

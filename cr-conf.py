@@ -52,7 +52,15 @@ class CRConf():
                         for k, v in self._quest_names.items()}
 
         self._polygon_web3 = None
-        self._schema = {
+        self._remote_schema = {
+            'crutil': {
+                'crutil_api_url': (
+                    'crutil update API URL',
+                    'The URL for a crutil update API server'),
+                'crutil_api_key': (
+                    'crutil update API key',
+                    'Authorization key for crutil update API server')}}
+        self._local_schema = {
             'crypto-raiders': {
                 'cr_api_key': (
                     'Crypto Raiders API Key',
@@ -68,7 +76,11 @@ class CRConf():
                     'The Polygon wallet address owning the raider NFTs'),
             }
         }
+        self._schema = self._remote_schema.copy()
+        self._schema.update(self._local_schema)
         self._loaded = {i: {} for i in self._schema.keys()}
+        self._can_update_remote = None
+        self._can_update_local = None
 
     def nft_owners(self):
         return ' '.join(self.nft_owner.split(',')).split()
@@ -81,8 +93,28 @@ class CRConf():
         if not os.path.exists(self._datadir):
             os.makedirs(self._datadir)
 
+    def _schema_loaded(self, schema):
+        for sect in schema.keys():
+            if sect not in self._loaded:
+                return False
+            for key in schema[sect].keys():
+                if key not in self._loaded[sect]:
+                    return False
+        return True
+
+    @property
+    def can_update_remote(self):
+        if self._can_update_remote is None:
+            self._can_update_remote = self._schema_loaded(self._remote_schema)
+        return self._can_update_remote
+
+    @property
+    def can_update_local(self):
+        if self._can_update_local is None:
+            self._can_update_local = self._schema_loaded(self._local_schema)
+        return self._can_update_local
+
     def load_config(self):
-        ret = True
         cp = configparser.ConfigParser()
         cp.read(self._conf_path)
         for sect in sorted(self._schema.keys()):
@@ -90,14 +122,18 @@ class CRConf():
                 if sect in cp and key in cp[sect]:
                     self._loaded[sect][key] = cp[sect][key]
                     setattr(self, key, cp[sect][key])
-                else:
-                    ret = False
-        return ret
+        self._can_update_local = None
+        self._can_update_remote = None
+        return self.can_update_local or self.can_update_remote
 
     def update(self, sect, key, val):
         assert key in self._schema[sect]
         self._loaded[sect][key] = val
         setattr(self, key, val)
+        if sect in self._local_schema and key in self._local_schema[sect]:
+            self._can_update_local = None
+        if sect in self._remote_schema and key in self._remote_schema[sect]:
+            self._can_update_remote = None
 
     def write_secrets(self, filename, data):
         mode = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
@@ -126,13 +162,17 @@ class CRConf():
         self.makedirs()
         self.write_secrets(self._conf_path, cfdata.getvalue())
 
-    def config_metadata(self):
+    def config_metadata(self, group):
+        if group is None:
+            schema = self._schema
+        else:
+            schema = getattr(self, '_%s_schema' % group)
         md = {}
-        for sect in sorted(self._schema.keys()):
+        for sect in sorted(schema.keys()):
             md[sect] = {}
-            for key in sorted(self._schema[sect].keys()):
-                md[sect][key] = {'name': self._schema[sect][key][0],
-                                 'desc': self._schema[sect][key][1]}
+            for key in sorted(schema[sect].keys()):
+                md[sect][key] = {'name': schema[sect][key][0],
+                                 'desc': schema[sect][key][1]}
                 if key in self._loaded[sect]:
                     md[sect][key]['value'] = self._loaded[sect][key]
         return md
@@ -200,12 +240,9 @@ class CRConf():
 conf = CRConf()
 
 
-def main():
-    cf = CRConf()
-    print('loading config...')
-    cf.load_config()
-    md = cf.config_metadata()
+def update_or_dump_conf(cf, group, dump=False):
     updated = False
+    md = cf.config_metadata(group)
     try:
         for sect in sorted(md.keys()):
             print('# %s configuration:' % (sect,))
@@ -213,13 +250,47 @@ def main():
                 if 'value' in md[sect][key]:
                     print('%s: %s' % (
                         md[sect][key]['name'], md[sect][key]['value']))
-                else:
+                elif not dump:
                     val = input('%s: ' % (md[sect][key]['name'],))
                     if len(val.strip()):
                         updated = True
                         cf.update(sect, key, val.strip())
     except EOFError:
         pass
+    return updated
+
+
+def input_bool(prompt):
+    yea = ('1', 'y', 'yes', 't', 'true')
+    naw = ('0', 'n', 'no', 'f', 'false')
+    while True:
+        res = input(prompt)
+        maybe = res.lower().strip()
+        if maybe in yea:
+            return True
+        elif maybe in naw:
+            return False
+
+
+def main():
+    cf = CRConf()
+    print('loading config...')
+    cf.load_config()
+    updated = False
+
+    if not cf.can_update_remote and \
+       input_bool('Would you like to use a remote database update server? '):
+        updated |= update_or_dump_conf(cf, 'remote')
+    else:
+        update_or_dump_conf(cf, 'remote', dump=True)
+
+    if not cf.can_update_local and \
+       (not cf.can_update_remote or input_bool(
+           'Would you like to perform local database updates? ')):
+        updated |= update_or_dump_conf(cf, 'local')
+    else:
+        update_or_dump_conf(cf, 'local', dump=True)
+
     if updated:
         print('saving updated config...')
         cf.save_config()

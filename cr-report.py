@@ -10,6 +10,7 @@ import requests
 
 cr_conf = __import__('cr-conf')
 cf = cr_conf.conf
+cru = __import__('cr-update')
 ampm = False
 bland = not sys.stdout.isatty()
 main_slots = ('main_hand', 'dress', 'finger', 'neck')
@@ -915,6 +916,8 @@ def main():
 
     parser.add_argument('-2', dest='ampm', default=True, action='store_false',
                         help='Use 24-hour time when applicable')
+    parser.add_argument('-U', dest='nodownload', action='store_true',
+                        help='Do not download database updates')
 
     p_best = subparsers.add_parser('best',
                                    help='Calculate best gear for raider')
@@ -973,6 +976,10 @@ def main():
     ampm = args.ampm
     sorting = tuple(i.strip().lower() for i in args.sort.split(',') if i)
 
+    if cf.can_update_remote and not args.nodownload:
+        cru.maybe_download_update(periodic=cru.periodic_print)
+        db = cf.opendb()
+
     if args.cmd is None or args.cmd == 'list':
         show_all_raiders(db, sorting=sorting)
         return
@@ -989,7 +996,6 @@ def main():
         rids, rids_trusted = args.raider
 
     if args.update:
-        cru = __import__('cr-update')
         if not rids_trusted:
             owned, questing = cru.get_raider_ids(periodic=cru.periodic_print)
             bad = set(rids) - owned - questing
@@ -998,8 +1004,8 @@ def main():
                     ' '.join(map(str, sorted(bad))),
                     ' '.join(cf.nft_owners())))
                 sys.exit(1)
-        cru.import_or_update(db, raiders=rids, recruiting=False,
-                             questing=False, periodic=cru.periodic_print)
+        db = cru.request_update(rids, recruiting=False, questing=False,
+                                periodic=cru.periodic_print)
 
     if 'mob' in args and 'all' in args.mob:
         args.mob = FightSimReport.mobs
