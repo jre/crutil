@@ -2,10 +2,11 @@
 import argparse
 import contextlib
 import datetime
-import json
+import mmh3
 import os
 import requests
 import sqlite3
+import struct
 import subprocess
 import sys
 import tempfile
@@ -14,7 +15,7 @@ cr_conf = __import__('cr-conf')
 cf = cr_conf.conf
 cr_report = __import__('cr-report')
 
-schema_version = 1
+schema_version = 2
 
 
 class DBVersionError(Exception):
@@ -66,26 +67,22 @@ def setupdb(db):
         charm INTEGER,
         luck INTEGER)''')
 
-    cur.execute('''CREATE TABLE IF NOT EXISTS gear_localid(
+    cur.execute('''CREATE TABLE IF NOT EXISTS gear(
         local_id INTEGER PRIMARY KEY,
+        hash INTEGER NOT NULL,
+        raider_id INTEGER NOT NULL,
+        name VARCHAR(255),
         equipped INTEGER,
         slot VARCHAR(255),
-        raider_id INTEGER,
-        source VARCHAR(255),
-        dedup_id INTEGER,
-        FOREIGN KEY(raider_id) REFERENCES raiders(id),
-        FOREIGN KEY(dedup_id) REFERENCES gear_uniq(dedup_id))''')
-
-    cur.execute('''CREATE TABLE IF NOT EXISTS gear_uniq(
-        dedup_id INTEGER PRIMARY KEY,
-        key VARCHAR(255) UNIQUE,
-        name VARCHAR(255),
         strength INTEGER,
         intelligence INTEGER,
         agility INTEGER,
         wisdom INTEGER,
         charm INTEGER,
-        luck INTEGER)''')
+        luck INTEGER,
+        FOREIGN KEY(raider_id) REFERENCES raiders(id))''')
+    cur.execute('CREATE INDEX IF NOT EXISTS gear__hash on gear(hash)')
+    cur.execute('CREATE INDEX IF NOT EXISTS gear__raider on gear(raider_id)')
 
     cur.execute('''CREATE TABLE IF NOT EXISTS raids(
         raider INTEGER PRIMARY KEY,
@@ -126,8 +123,41 @@ def schema_upgrade_v1(db):
     db.commit()
 
 
+def schema_upgrade_v2(db):
+    cur = db.cursor()
+    cur.execute('BEGIN TRANSACTION')
+    cur.execute('DROP TABLE IF EXISTS gear')
+    cur.execute('''CREATE TABLE gear(
+        local_id INTEGER PRIMARY KEY,
+        hash INTEGER NOT NULL,
+        raider_id INTEGER NOT NULL,
+        name VARCHAR(255),
+        equipped INTEGER,
+        slot VARCHAR(255),
+        strength INTEGER,
+        intelligence INTEGER,
+        agility INTEGER,
+        wisdom INTEGER,
+        charm INTEGER,
+        luck INTEGER,
+        FOREIGN KEY(raider_id) REFERENCES raiders(id))''')
+    cur.execute('CREATE INDEX gear__hash on gear(hash)')
+    cur.execute('CREATE INDEX gear__raider on gear(raider_id)')
+    cur.execute('''SELECT l.local_id, l.raider_id, l.equipped, l.slot, u.name,
+        u.strength, u.intelligence, u.agility, u.wisdom, u.charm, u.luck
+        FROM gear_localid l, gear_uniq u WHERE l.dedup_id = u.dedup_id''')
+    for row in list(cur.fetchall()):
+        hash = hash_gear_uniq(*row[-7:])
+        cur.execute('''INSERT INTO gear (local_id, raider_id, equipped, slot,
+            name, strength, intelligence, agility, wisdom, charm, luck, hash)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''', row + (hash,))
+    cur.execute('DROP TABLE gear_localid')
+    cur.execute('DROP TABLE gear_uniq')
+    db.commit()
+
+
 def checkdb(db):
-    upgrades = (schema_upgrade_v1,)
+    upgrades = (schema_upgrade_v1, schema_upgrade_v2)
     cur = db.cursor()
     try:
         cur.execute('SELECT value FROM meta WHERE name = ?',
@@ -191,24 +221,21 @@ def gzip_from(srcpath, destdir, destname, periodic=noop):
     periodic(message='to %s' % (destname,))
 
 
-def ensure_dedup_gear(cur, name_stats):
-    assert len(name_stats) == 7
-    key = json.dumps(name_stats)
-    cur.execute('SELECT dedup_id FROM gear_uniq WHERE key = ?', (key,))
-    rows = cur.fetchall()
-    if len(rows):
-        return rows[0][0]
-
-    cur.execute('''INSERT INTO gear_uniq (key, name,
-        strength, intelligence, agility, wisdom, charm, luck) VALUES (
-        ?, ?, ?, ?, ?, ?, ?, ?)''', (key,) + tuple(name_stats))
-    return cur.lastrowid
+def hash_gear_uniq(name, *stats):
+    assert isinstance(name, str), (name,)
+    assert len(stats) == 6, (stats,)
+    assert all(isinstance(i, int) for i in stats), (stats,)
+    namebuf = name.encode('utf-8')
+    keybuf = struct.pack('!%ss6q' % len(namebuf), namebuf, *stats)
+    pair = mmh3.hash64(keybuf)
+    return pair[0] ^ pair[1]
 
 
-def raider_has_gear(cur, raider_id, dedup_id):
-    cur.execute('''SELECT local_id FROM gear_localid
-        WHERE dedup_id = ? AND raider_id = ?''', (dedup_id, raider_id))
-    rows = cur.fetchall()
+def get_raider_gear(cur, raider_id, name_stats):
+    hash = hash_gear_uniq(*name_stats)
+    cur.execute('SELECT local_id FROM gear WHERE raider_id = ? AND hash = ?',
+                (raider_id, hash))
+    rows = list(cur.fetchall())
     if len(rows):
         return rows[0][0]
 
@@ -367,27 +394,26 @@ def import_raider_full(cur, raider_id, periodic=noop):
         name_stats = [inv['item']['name']]
         name_stats.extend(inv['item'].get('stats', {}).get(i, 0)
                           for i in stats)
-        dedup_id = ensure_dedup_gear(cur, name_stats)
         equipped = inv.get('equipped', False)
-        local_id = raider_has_gear(cur, raider_id, dedup_id)
+        local_id = get_raider_gear(cur, raider_id, name_stats)
         periodic()
-        if local_id:
-            if equipped:
-                equipped_ids.append(local_id)
-            continue
-        cur.execute('''INSERT INTO gear_localid (
-            equipped, slot, raider_id, source, dedup_id)
-            VALUES (?, ?, ?, ?, ?)''', (
-                equipped, inv['item']['slot'], raider_id, 'cr', dedup_id))
+        if local_id is None:
+            hash = hash_gear_uniq(*name_stats)
+            cur.execute('''INSERT INTO gear (hash, raider_id, equipped, slot,
+                name, strength, intelligence, agility, wisdom, charm, luck)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                        [hash, raider_id, equipped, inv['item']['slot']] +
+                        name_stats)
+            local_id = cur.lastrowid
         if equipped:
             equipped_ids.append(cur.lastrowid)
 
     ne_equipped = ''.join(' AND local_id != %d' % i for i in equipped_ids)
-    cur.execute('''UPDATE gear_localid SET equipped = FALSE
+    cur.execute('''UPDATE gear SET equipped = FALSE
         WHERE raider_id = ? %s''' % (ne_equipped,), (raider_id,))
     if equipped_ids:
         eq_equipped = ' OR '.join('local_id = %d' % i for i in equipped_ids)
-        cur.execute('''UPDATE gear_localid SET equipped = TRUE
+        cur.execute('''UPDATE gear SET equipped = TRUE
             WHERE %s''' % (eq_equipped,))
 
 
@@ -398,7 +424,6 @@ def iso_datetime_to_secs(isotime):
 
 def import_raider_gear(db, periodic=noop):
     periodic('Importing guru data', message='querying API')
-    source = 'crguru'
     cur = db.cursor()
     cur.execute('BEGIN TRANSACTION')
 
@@ -436,17 +461,16 @@ def import_raider_gear(db, periodic=noop):
                 name_stats = [inv['item']['name']]
                 name_stats.extend((inv['item'].get('stats') or {}).get(i, 0)
                                   for i in stats)
-                dedup_id = ensure_dedup_gear(cur, name_stats)
-                if raider_has_gear(cur, raider_id, dedup_id):
-                    periodic()
+                periodic()
+                if get_raider_gear(cur, raider_id, name_stats) is not None:
                     continue
-                params = {'dedup_id': dedup_id,
-                          'slot': inv['item']['slot'],
-                          'raider_id': raider_id,
-                          'source': source}
-                cur.execute('''INSERT INTO gear_localid (
-                    dedup_id, slot, raider_id, source) VALUES (
-                    :dedup_id, :slot, :raider_id, :source)''', params)
+                hash = hash_gear_uniq(*name_stats)
+                cur.execute('''INSERT INTO gear (
+                    hash, raider_id, equipped, slot, name,
+                    strength, intelligence, agility, wisdom, charm, luck)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                            [hash, raider_id, False, inv['item']['slot']] +
+                            name_stats)
                 periodic()
                 found[raider_id] += 1
             periodic(message='found %d new items for %d - [%d] %s from %s' % (
