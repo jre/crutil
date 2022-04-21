@@ -275,7 +275,8 @@ def import_all_raiders(db, periodic=noop):
         # XXX can the owner method show if we have sold the raider
         # or maybe raiderInfo.raidersOwnedBy
         print('Warning: skipping %d unknown raiders: %s' % (
-            len(skipped), ' '.join(sorted(map(str, skipped)))))
+            len(skipped), ' '.join(sorted(map(str, skipped)))),
+              file=sys.stderr)
 
     periodic()
 
@@ -420,7 +421,7 @@ def import_raider_gear(db, periodic=noop):
                           json={'data': {'id': owner}})
         if not r.ok:
             # XXX how to signal failure here and keep going
-            print('  failed %d %s' % (r.status_code, r.reason))
+            print('failed %d %s' % (r.status_code, r.reason), file=sys.stderr)
             continue
         data = r.json()
         periodic(message='found data for %d raiders for %s' % (
@@ -543,7 +544,7 @@ def import_raider_quests(db, idlist, questing_ids=None,
             periodic()
         except ValueError:
             print('unknown quest contract for raider %d: %s' % (
-                rid, params['contract']))
+                rid, params['contract']), file=sys.stderr)
             continue
 
         params['status'] = myquest.raiderStatus(rid).call()
@@ -635,14 +636,14 @@ def import_or_update(db, started_at=None, raiders=None, basic=True, gear=True,
 def ensure_raider_ids(db, val, usage):
     raider, trusted = findraider(db, val)
     if raider is None:
-        print('No raider named "%s" found' % (val,))
+        print('No raider named "%s" found' % (val,), file=sys.stderr)
         usage()
         sys.exit(1)
     elif not trusted:
         owned, questing = get_raider_ids(periodic=periodic_print)
         if raider not in owned and raider not in questing:
             print('raider %d not owned by %s' % (
-                raider, ' '.join(cf.nft_owners())))
+                raider, ' '.join(cf.nft_owners())), file=sys.stderr)
             sys.exit(1)
     return raider
 
@@ -756,10 +757,11 @@ def main():
         args.nodownload = True
 
     if not cf.load_config():
-        print('error: please run ./cr-conf.py to configure')
+        print('error: please run ./cr-conf.py to configure', file=sys.stderr)
         sys.exit(1)
     if not cf.can_update_local and args.local:
-        print('error: please run ./cr-conf.py to configure local updates')
+        print('error: please run ./cr-conf.py to configure local updates',
+              file=sys.stderr)
         sys.exit(1)
 
     cf.makedirs()
