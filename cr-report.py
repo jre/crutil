@@ -879,7 +879,7 @@ def main():
     if not cf.load_config():
         print('error: please run ./cr-conf.py to configure')
         sys.exit(1)
-    db = cf.opendb()
+    db = cru.friendly_dbopen()
 
     def raider(v):
         ids, trusted = findraider(db, v)
@@ -978,7 +978,7 @@ def main():
 
     if cf.can_update_remote and not args.nodownload:
         cru.maybe_download_update(periodic=cru.periodic_print)
-        db = cf.opendb()
+        db = cru.friendly_dbopen()
 
     if args.cmd is None or args.cmd == 'list':
         show_all_raiders(db, sorting=sorting)

@@ -18,7 +18,10 @@ schema_version = 1
 
 
 class DBVersionError(Exception):
-    pass
+    def __init__(self, version):
+        self.version = version
+        super().__init__('expected DB schema version %d but found %d' % (
+            schema_version, version))
 
 
 def noop(*a, **kw):
@@ -35,20 +38,6 @@ def periodic_print(section=None, message=None):
         print(' %s: %s' % (_last_section[0], message))
     elif section:
         print(' %s' % (section,))
-
-
-def checkdb(db):
-    cur = db.cursor()
-    db_vers = None
-    try:
-        cur.execute('SELECT value FROM meta WHERE name = ?',
-                    ('schema-version',))
-        db_vers = (list(cur.fetchall()) + [None])[0][0]
-    except sqlite3.OperationalError:
-        pass
-    if db_vers is not None and db_vers != schema_version:
-        raise DBVersionError('expected DB schema version %d but found %d' % (
-            schema_version, db_vers))
 
 
 def setupdb(db):
@@ -122,6 +111,48 @@ def setupdb(db):
         FOREIGN KEY(raider) REFERENCES raiders(id))''')
 
     db.commit()
+
+
+def schema_upgrade_v1(db):
+    cur = db.cursor()
+    cur.execute('BEGIN TRANSACTION')
+    cur.execute('''CREATE TABLE meta(
+        name VARCHAR(255) PRIMARY KEY,
+        value INTEGER)''')
+    cur.execute('''INSERT INTO meta (name, value)
+        VALUES (?, ?), (?, ?), (?, ?), (?, ?)''',
+                ('schema-version', 2, 'snapshot-started', 0,
+                 'snapshot-updated', 0, 'snapshot-finished', 0))
+    db.commit()
+
+
+def checkdb(db):
+    upgrades = (schema_upgrade_v1,)
+    cur = db.cursor()
+    try:
+        cur.execute('SELECT value FROM meta WHERE name = ?',
+                    ('schema-version',))
+        db_vers = cur.fetchone()[0]
+    except sqlite3.OperationalError:
+        cur.execute('SELECT COUNT(*) FROM PRAGMA_TABLE_INFO(?)', ('raiders',))
+        if cur.fetchone()[0] == 0:
+            # empty database
+            return
+        # apparently valid database lacking meta table, call this version 0
+        db_vers = 0
+
+    orig_vers = db_vers
+    while db_vers < schema_version and db_vers < len(upgrades):
+        upgrades[db_vers](db)
+        db_vers += 1
+    if orig_vers != db_vers:
+        cur.execute('INSERT OR REPLACE INTO meta (name, value) VALUES (?, ?)',
+                    ('schema-version', schema_version))
+        db.commit()
+        print('note: upgraded database schema from version %d to %d' % (
+            orig_vers, db_vers), file=sys.stderr)
+    if db_vers != schema_version:
+        raise DBVersionError(db_vers)
 
 
 @contextlib.contextmanager
@@ -672,11 +703,9 @@ def maybe_download_update(periodic=noop):
 
     if not latest:
         return
-    elif latest['schema-version'] > schema_version:
-        print('Latest database schema is too new for this code, try git pull?')
-        sys.exit(1)
-    elif latest['schema-version'] < schema_version:
-        print('Latest database schema is too old for this code')
+    elif latest['schema-version'] != schema_version:
+        print(schema_version_advice(latest['schema-version']),
+              file=sys.stderr)
         sys.exit(1)
     elif (latest['snapshot-started'] > current['snapshot-started'] or
           (latest['snapshot-started'] == current['snapshot-started'] and
@@ -685,6 +714,24 @@ def maybe_download_update(periodic=noop):
             current['snapshot-started'], current['snapshot-updated'],
             latest['snapshot-started'], latest['snapshot-updated']))
         download_and_install_snapshot(latest['url'], periodic=periodic)
+
+
+def schema_version_advice(version):
+    if version > schema_version:
+        return 'Database is too new for this code, try git pull?'
+    elif version < schema_version:
+        return 'Database is too old for this code, are you on a branch?'
+
+
+def friendly_dbopen():
+    try:
+        db = cf.opendb()
+    except DBVersionError as exc:
+        print('%s\n%s' % (exc.args[0], schema_version_advice(exc.version)),
+              file=sys.stderr)
+        sys.exit(1)
+    setupdb(db)
+    return db
 
 
 def main():
@@ -718,8 +765,7 @@ def main():
     cf.makedirs()
     if cf.can_update_remote and not args.nodownload:
         maybe_download_update(periodic=periodic_print)
-    db = cf.opendb()
-    setupdb(db)
+    db = friendly_dbopen()
 
     raiders = None
     if args.raider is not None:
