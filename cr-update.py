@@ -2,6 +2,7 @@
 import argparse
 import contextlib
 import datetime
+import json
 import mmh3
 import os
 import requests
@@ -10,6 +11,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 
 cr_conf = __import__('cr-conf')
 cf = cr_conf.conf
@@ -185,6 +187,122 @@ def checkdb(db):
         raise DBVersionError(db_vers)
 
 
+class GearDB():
+    _dumpver = 1
+    _extra_keys = set(('endless',))
+
+    def __init__(self):
+        self._rows = [None]
+        self._gearids = {}
+        self._extra = {}
+        self._lock = threading.Lock()
+
+    @property
+    def last_local_id(self):
+        nrows = len(self._rows)
+        return nrows - 1 if nrows > 1 else None
+
+    def _add_gear(self, hash, raider_id, slot, name, stats):
+        self._rows.append((hash, raider_id, slot, name) + tuple(stats))
+        self._gearids.setdefault(raider_id, {})[hash] = self.last_local_id
+
+    def _get_localid(self, raider_id, hash):
+        return self._gearids.get(raider_id, {}).get(hash)
+
+    def _set_extra(self, raider_id, key, val):
+        assert key in self._extra_keys
+        self._extra.setdefault(raider_id, {})[key] = val
+
+    def load(self, fh):
+        data = json.load(fh)
+        if data.get('version') != self._dumpver:
+            print('expected gear json version %d but found %s' % (
+                self._dumpver, data.get('version')))
+            sys.exit(1)
+
+        with self._lock:
+            self._rows = [None]
+            self._gearids = {}
+            self._extra = data['raiders']
+            for row in data['gear']:
+                hash = hash_gear_uniq(*row[-7:])
+                assert hash == row[0]
+                params = [hash] + list(row[1:-6]) + [row[-6:]]
+                self._add_gear(*params)
+
+    def save(self, fh):
+        with self._lock:
+            data = {'version': self._dumpver,
+                    'raiders': self._extra,
+                    'gear': self._rows[1:]}
+            json.dump(data, fh)
+
+    def load_from_sql(self, cur):
+        cur.execute('''SELECT local_id, hash, raider_id, slot, name,
+            strength, intelligence, agility, wisdom, charm, luck
+            FROM gear ORDER BY local_id''')
+        rows = list(cur.fetchall())
+        cur.execute('''SELECT raider, last_endless
+            FROM raids WHERE last_endless''')
+        extra = {r: {'endless': l} for r, l in cur.fetchall()}
+
+        with self._lock:
+            self._rows = [None]
+            self._gearids = {}
+            self._extra = extra
+            next_id = 1
+            for row in rows:
+                local_id, hash, raider_id, slot, name = row[:5]
+                stats = row[5:]
+                if local_id > next_id:
+                    self._rows.extend(((None,),) * (local_id - next_id))
+                self._add_gear(hash, raider_id, slot, name, stats)
+                assert local_id == self.last_local_id
+                next_id = local_id + 1
+
+    def save_to_sql(self, cur):
+        cur.execute('SELECT MAX(local_id) FROM gear')
+        next_local_id = (cur.fetchone()[0] or 0) + 1
+
+        newrows = ()
+        with self._lock:
+            if next_local_id <= self.last_local_id:
+                newrows = self._rows[next_local_id:]
+            endless = [{'r': r, 'e': d['endless']}
+                       for r, d in self._extra.items() if 'endless' in d]
+
+        cur.executemany('''INSERT INTO gear (hash, raider_id, slot, name, %s)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''' % (
+                ','.join(cr_conf.stats)), newrows)
+        cur.executemany('''INSERT INTO raids (raider, last_endless)
+            VALUES (:r, :e) ON CONFLICT (raider) DO UPDATE
+            SET last_endless = :e WHERE raider = :r''', endless)
+
+        return len(newrows)
+
+    def add_multi_inventory(self, multi):
+        res = []
+        with self._lock:
+            for raider in multi:
+                raider_id = raider['tokenId']
+                for inv in raider['inventory']:
+                    hash, name, stats = get_item_stats(inv)
+                    local_id = self._get_localid(raider_id, hash)
+                    slot = inv['item']['slot']
+                    wasnew = local_id is None
+                    if local_id is None:
+                        self._add_gear(hash, raider_id, slot, name, stats)
+                        local_id = self.last_local_id
+                    res.append((local_id, wasnew, inv))
+                if 'lastEndless' in raider:
+                    secs = iso_datetime_to_secs(raider['lastEndless'])
+                    self._set_extra(raider_id, 'endless', secs)
+        return res
+
+
+geardb = GearDB()
+
+
 @contextlib.contextmanager
 def permatempfile(dest, suffix=None, mode=0o644, binary=True):
     destdir, destfile = os.path.split(dest)
@@ -231,13 +349,12 @@ def hash_gear_uniq(name, *stats):
     return pair[0] ^ pair[1]
 
 
-def get_raider_gear(cur, raider_id, name_stats):
-    hash = hash_gear_uniq(*name_stats)
-    cur.execute('SELECT local_id FROM gear WHERE raider_id = ? AND hash = ?',
-                (raider_id, hash))
-    rows = list(cur.fetchall())
-    if len(rows):
-        return rows[0][0]
+def get_item_stats(item):
+    name = item['item']['name']
+    stats_dict = item['item'].get('stats', {})
+    stats = tuple(stats_dict.get(i, 0) for i in cr_conf.stats)
+    hash = hash_gear_uniq(name, *stats)
+    return hash, name, stats
 
 
 def get_owned_raider_nfts(periodic=noop):
@@ -329,6 +446,7 @@ def import_raiders(cur, all_ids, full=False, periodic=noop):
         datetime.datetime.utcnow())
     periodic('Importing raider data from CR API')
 
+    all_raider_meta = []
     for first in range(0, len(all_ids), 50):
         chunk_ids = all_ids[first:first+50]
         periodic(message='fetching %d raiders' % (len(chunk_ids),))
@@ -363,58 +481,37 @@ def import_raiders(cur, all_ids, full=False, periodic=noop):
                     remaining, last_raid = rows[0]
                     if last_raid > last_weekly.timestamp() and remaining == 0:
                         continue
-            import_raider_full(cur, data['id'])
+            r = requests.get('%s/game/raider/%s' % (cf.cr_api_url, data['id']),
+                             params={'key': cf.cr_api_key})
+            all_raider_meta.append(r.json())
         periodic(message='imported %d/%d' % (first + len(data_rows),
                                              len(all_ids)))
+    import_raider_extended(cur, all_raider_meta, periodic=periodic)
 
 
-def import_raider_full(cur, raider_id, periodic=noop):
-    periodic()
-    r = requests.get('%s/game/raider/%s' % (cf.cr_api_url, raider_id),
-                     params={'key': cf.cr_api_key})
-    periodic()
-    data = r.json()
-    stats = ('strength', 'intelligence', 'agility', 'wisdom', 'charm', 'luck')
+def import_raider_extended(cur, raiders, periodic=noop):
+    periodic(message='processing extended api data')
 
-    params = {
-        'raider': raider_id,
-        'remaining': data['raidsRemaining'],
-        'last_raid': (iso_datetime_to_secs(data['lastRaided'])
-                      if 'lastRaided' in data else 0),
-    }
-    cur.execute('''INSERT INTO raids (raider, remaining, last_raid)
-        VALUES (:raider, :remaining, :last_raid)
+    for data in raiders:
+        data['lastRaidedSecs'] = (iso_datetime_to_secs(data['lastRaided'])
+                                  if 'lastRaided' in data else 0)
+    cur.executemany('''INSERT INTO raids (raider, remaining, last_raid)
+        VALUES (:tokenId, :raidsRemaining, :lastRaidedSecs)
         ON CONFLICT (raider) DO UPDATE
-        SET remaining = :remaining, last_raid = :last_raid
-        WHERE raider = :raider''', params)
-    periodic()
+        SET remaining = :raidsRemaining, last_raid = :lastRaidedSecs
+        WHERE raider = :tokenId''', raiders)
+    periodic(message='updaded raiding data')
 
     equipped_ids = []
-    for inv in data.get('inventory', ()):
-        name_stats = [inv['item']['name']]
-        name_stats.extend(inv['item'].get('stats', {}).get(i, 0)
-                          for i in stats)
-        equipped = inv.get('equipped', False)
-        local_id = get_raider_gear(cur, raider_id, name_stats)
-        periodic()
-        if local_id is None:
-            hash = hash_gear_uniq(*name_stats)
-            cur.execute('''INSERT INTO gear (hash, raider_id, equipped, slot,
-                name, strength, intelligence, agility, wisdom, charm, luck)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                        [hash, raider_id, equipped, inv['item']['slot']] +
-                        name_stats)
-            local_id = cur.lastrowid
-        if equipped:
-            equipped_ids.append(cur.lastrowid)
-
-    ne_equipped = ''.join(' AND local_id != %d' % i for i in equipped_ids)
-    cur.execute('''UPDATE gear SET equipped = FALSE
-        WHERE raider_id = ? %s''' % (ne_equipped,), (raider_id,))
-    if equipped_ids:
-        eq_equipped = ' OR '.join('local_id = %d' % i for i in equipped_ids)
-        cur.execute('''UPDATE gear SET equipped = TRUE
-            WHERE %s''' % (eq_equipped,))
+    for local_id, was_new, item in geardb.add_multi_inventory(raiders):
+        if item.get('equipped', False):
+            equipped_ids.append(local_id)
+    newcount = geardb.save_to_sql(cur)
+    periodic(message='added %d new item(s)' % (newcount,))
+    cur.execute('UPDATE gear SET equipped = FALSE')
+    cur.executemany('UPDATE gear SET equipped = TRUE WHERE local_id = ?',
+                    ((i,) for i in equipped_ids))
+    periodic()
 
 
 def iso_datetime_to_secs(isotime):
@@ -437,9 +534,8 @@ def import_raider_gear(db, periodic=noop):
            'sec-fetch-site': 'cross-site',
            'sec-fetch-mode': 'cors',
            'sec-fetch-dest': 'empty'}
-    stats = ('strength', 'intelligence', 'agility', 'wisdom', 'charm', 'luck')
-    found = {}
 
+    raiders = []
     for owner in cf.nft_owners():
         periodic(message='querying guru database for %s' % (owner,))
         r = requests.post(crg_url, headers=hdr,
@@ -451,46 +547,12 @@ def import_raider_gear(db, periodic=noop):
         data = r.json()
         periodic(message='found data for %d raiders for %s' % (
             len(data['data']['data']['raiders']), owner))
+        raiders.extend(data['data']['data']['raiders'])
 
-        for raider in data['data']['data']['raiders']:
-            raider_id = raider['tokenId']
-            found.setdefault(raider_id, 0)
-
-            periodic()
-            for inv in raider['inventory']:
-                name_stats = [inv['item']['name']]
-                name_stats.extend((inv['item'].get('stats') or {}).get(i, 0)
-                                  for i in stats)
-                periodic()
-                if get_raider_gear(cur, raider_id, name_stats) is not None:
-                    continue
-                hash = hash_gear_uniq(*name_stats)
-                cur.execute('''INSERT INTO gear (
-                    hash, raider_id, equipped, slot, name,
-                    strength, intelligence, agility, wisdom, charm, luck)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                            [hash, raider_id, False, inv['item']['slot']] +
-                            name_stats)
-                periodic()
-                found[raider_id] += 1
-            periodic(message='found %d new items for %d - [%d] %s from %s' % (
-                found[raider_id], raider_id, raider['level'],
-                raider['name'], raider['updatedAt']))
-
-            if 'lastEndless' in raider:
-                params = {
-                    'raider': raider_id,
-                    'last_endless': iso_datetime_to_secs(raider['lastEndless']),
-                }
-                cur.execute('''INSERT INTO raids (raider, last_endless)
-                    VALUES (:raider, :last_endless)
-                    ON CONFLICT (raider) DO UPDATE
-                    SET last_endless = :last_endless
-                    WHERE raider = :raider''', params)
-    periodic()
+    geardb.add_multi_inventory(raiders)
+    newcount = geardb.save_to_sql(cur)
+    periodic(message='added %d new item(s)' % (newcount,))
     db.commit()
-    periodic(message='Found %d new gear items for %d raiders' % (
-        sum(found.values()), len(found)))
 
 
 def import_raider_recruitment(db, idlist, full=False, periodic=noop):
@@ -759,6 +821,11 @@ def friendly_dbopen():
     return db
 
 
+def maybe_load_geardb(db, forcelocal=None):
+    if not cf.can_update_remote or forcelocal:
+        geardb.load_from_sql(db.cursor())
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-r', dest='raider',
@@ -797,6 +864,7 @@ def main():
     if args.raider is not None:
         raiders = ensure_raider_ids(db, args.raider, parser.print_usage),
 
+    maybe_load_geardb(db, forcelocal=args.local)
     request_update(raiders, gear=args.gear, recruiting=args.recruiting,
                    questing=args.questing, periodic=periodic_print,
                    forcelocal=args.local)

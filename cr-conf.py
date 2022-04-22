@@ -8,6 +8,7 @@ import requests
 appname = 'crutil'
 
 slots = ('main_hand', 'dress', 'knickknack', 'finger', 'neck', 'background')
+stats = ('strength', 'intelligence', 'agility', 'wisdom', 'charm', 'luck')
 
 
 class CRConf():

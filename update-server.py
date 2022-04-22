@@ -24,6 +24,8 @@ api_key = None
 rebuilder = None
 updater = None
 all_raider_ids = set()
+geardb = cru.geardb
+geardb_file = None
 
 
 def load_latest(path):
@@ -47,6 +49,26 @@ def update_latest(info):
         with cru.permatempfile(latest_file, suffix='.json',
                                binary=False) as fh:
             json.dump(info, fh)
+
+
+def load_geardb(path, trysql=()):
+    global geardb_file
+    geardb_file = path
+    if os.path.exists(geardb_file):
+        geardb.load(open(geardb_file))
+        return True
+    for dbpath in trysql:
+        if os.path.exists(dbpath):
+            db = cf.opendb(dbpath)
+            cru.setupdb(db)
+            geardb.load_from_sql(db.cursor())
+            return True
+
+
+def save_geardb():
+    with cru.permatempfile(geardb_file, suffix='.json',
+                           binary=False) as fh:
+        geardb.save(fh)
 
 
 @webapp.route("/latest")
@@ -166,6 +188,7 @@ class RebuildThread(BaseThread):
                 _, all_rids = self._update_db(db_path)
                 all_raider_ids = set(all_rids)
                 os.rename(db_path, updater._new_db_path)
+                save_geardb()
             except Exception:
                 self._periodic(message=traceback.format_exc())
             with self.__sub_lock:
@@ -191,17 +214,18 @@ class UpdateThread(BaseThread):
         super().__init__('updater', **kw)
         self.__requests = queue.SimpleQueue()
         self.__status = None
+        self._base_db_path = os.path.join(self._workdir, 'update-base.sqlite')
         self._new_db_path = os.path.join(self._workdir, 'new-base-db.sqlite')
 
     def run(self):
-        db_path = os.path.join(self._workdir, 'update-base.sqlite')
         while True:
             params, self.__status = self.__requests.get()
             try:
                 self._periodic('Updating database')
                 if os.path.exists(self._new_db_path):
-                    os.rename(self._new_db_path, db_path)
-                self._update_db(db_path, params)
+                    os.rename(self._new_db_path, self._base_db_path)
+                self._update_db(self._base_db_path, params)
+                save_geardb()
             except Exception:
                 self._periodic(message=traceback.format_exc())
             self._publish_status(None)
@@ -246,6 +270,9 @@ def main():
             'baseurlpath': args.dburlpath}
     rebuilder = RebuildThread(**thrp)
     updater = UpdateThread(**thrp)
+    load_geardb(os.path.join(workdir, 'gear.json'),
+                trysql=(updater._new_db_path, updater._base_db_path))
+
     rebuilder.start()
     updater.start()
     WSGIServer(webapp, multiplexed=True,

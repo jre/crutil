@@ -999,6 +999,7 @@ def main():
                     ' '.join(map(str, sorted(bad))),
                     ' '.join(cf.nft_owners())))
                 sys.exit(1)
+        cru.maybe_load_geardb(db)
         db = cru.request_update(rids, recruiting=False, questing=False,
                                 periodic=cru.periodic_print)
 
