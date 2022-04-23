@@ -39,8 +39,6 @@ def periodic_print(section=None, message=None):
         _last_section[0] = section
     if message:
         print(' %s: %s' % (_last_section[0], message))
-    elif section:
-        print(' %s' % (section,))
 
 
 def req_get(session, url, **kw):
@@ -329,22 +327,24 @@ def mv_to(srcpath, destpath):
 
 def gzip_to(srcpath, destdir, destname, periodic=noop):
     with permatempfile(os.path.join(destdir, destname), mode=0o444) as tmp:
-        periodic('Compressing')
+        periodic(message='compressing %s to %s' % (
+            os.path.basename(srcpath), destname))
         subprocess.run(('gzip', '-9cn', srcpath),
                        stdin=subprocess.DEVNULL,
                        stdout=tmp.fileno(),
                        check=True)
-    periodic(message='to %s' % (destname,))
+    periodic()
 
 
 def gzip_from(srcpath, destdir, destname, periodic=noop):
     with permatempfile(os.path.join(destdir, destname), mode=0o444) as tmp:
-        periodic('Decompressing')
+        periodic(message='decompressing %s to %s' % (
+            os.path.basename(srcpath), destname))
         subprocess.run(('gzip', '-cd', srcpath),
                        stdin=subprocess.DEVNULL,
                        stdout=tmp.fileno(),
                        check=True)
-    periodic(message='to %s' % (destname,))
+    periodic()
 
 
 def hash_gear_uniq(name, *stats):
@@ -379,7 +379,7 @@ def get_owned_raider_nfts(periodic=noop, session=None):
         periodic(message='found %d raider NFTs: %s' % (
             data['totalCount'],
             ' '.join(str(int(i.lower().lstrip('0x').lstrip('0'), 16))
-                     for i in found)))
+                     for i in sorted(found))))
         all_nfts.extend(found)
     return all_nfts
 
@@ -402,7 +402,7 @@ def get_questing_raider_ids(periodic=noop, session=None):
         owner = cf.get_polygon_web3().toChecksumAddress(o)
         new_ids = contract.functions.getOwnedRaiders(owner).call()
         periodic(message='found %d questing raiders: %s' % (
-            len(new_ids), ' '.join(map(str, new_ids))))
+            len(new_ids), ' '.join(map(str, sorted(new_ids)))))
         ids.extend(new_ids)
     return ids
 
@@ -466,7 +466,7 @@ def import_raiders(cur, all_ids, periodic=noop, session=None):
 
         for idx, data in enumerate(data_rows, first):
             periodic(message='importing raider %d/%d - %d %s' % (
-                idx, len(all_ids), data['id'], data['name']))
+                idx + 1, len(all_ids), data['id'], data['name']))
             params = {i['trait_type']: i['value']
                       for i in data['attributes'] if 'value' in i}
             params['id'] = data['id']
@@ -485,14 +485,11 @@ def import_raiders(cur, all_ids, periodic=noop, session=None):
             r = req_get(session, '%s/game/raider/%s' % (
                 cf.cr_api_url, data['id']), params={'key': cf.cr_api_key})
             all_raider_meta.append(r.json())
-        periodic(message='imported %d/%d' % (first + len(data_rows),
-                                             len(all_ids)))
     import_raider_extended(cur, all_raider_meta, periodic=periodic)
 
 
 def import_raider_extended(cur, raiders, periodic=noop):
-    periodic(message='processing extended api data')
-
+    periodic()
     for data in raiders:
         data['lastRaidedSecs'] = (iso_datetime_to_secs(data['lastRaided'])
                                   if 'lastRaided' in data else 0)
@@ -501,14 +498,19 @@ def import_raider_extended(cur, raiders, periodic=noop):
         ON CONFLICT (raider) DO UPDATE
         SET remaining = :raidsRemaining, last_raid = :lastRaidedSecs
         WHERE raider = :tokenId''', raiders)
-    periodic(message='updaded raiding data')
+    periodic()
+
+    cur.execute('SELECT MAX(rowid) FROM gear')
+    if not cur.fetchone()[0]:
+        newcount = geardb.save_to_sql(cur)
+        periodic(message='added %d saved gear item(s)' % (newcount,))
 
     equipped_ids = []
     for local_id, was_new, item in geardb.add_multi_inventory(raiders):
         if item.get('equipped', False):
             equipped_ids.append(local_id)
     newcount = geardb.save_to_sql(cur)
-    periodic(message='added %d new item(s)' % (newcount,))
+    periodic(message='added %d new gear item(s)' % (newcount,))
     cur.execute('UPDATE gear SET equipped = FALSE WHERE raider_id IN (%s)' % (
         ','.join(('?',) * len(raiders))),
                 [r['tokenId'] for r in raiders])
@@ -523,7 +525,7 @@ def iso_datetime_to_secs(isotime):
 
 
 def import_raider_gear(db, periodic=noop, session=None):
-    periodic('Importing guru data', message='querying API')
+    periodic('Importing guru data')
     cur = db.cursor()
     cur.execute('BEGIN TRANSACTION')
 
@@ -554,7 +556,7 @@ def import_raider_gear(db, periodic=noop, session=None):
 
     geardb.add_multi_inventory(raiders)
     newcount = geardb.save_to_sql(cur)
-    periodic(message='added %d new item(s)' % (newcount,))
+    periodic(message='added %d new gear item(s)' % (newcount,))
     db.commit()
 
 
@@ -565,7 +567,7 @@ def import_raider_recruitment(db, idlist, full=False,
     cur = db.cursor()
     recruiting = cf.get_eth_contract('recruiting', session=session).functions
     for idx, rid in enumerate(sorted(idlist)):
-        periodic(message='%d/%d - raider %d' % (idx, len(idlist), rid))
+        periodic(message='%d/%d - raider %d' % (idx + 1, len(idlist), rid))
         cost, next_time = None, None
         if not full:
             cur.execute('SELECT next, cost FROM recruiting WHERE raider = ?',
@@ -594,9 +596,8 @@ def import_raider_recruitment(db, idlist, full=False,
             cur.execute('''INSERT OR REPLACE INTO recruiting (
                 raider, next, cost) VALUES (?, ?, ?)''',
                         (rid, next_time, cost))
-    periodic(message='%d/%d - done' % (len(idlist), len(idlist)))
-    db.commit()
     periodic()
+    db.commit()
 
 
 def import_raider_quests(db, idlist, questing_ids=None,
@@ -617,7 +618,7 @@ def import_raider_quests(db, idlist, questing_ids=None,
                                    session=session).functions
 
     for idx, rid in enumerate(sorted(idlist)):
-        periodic(message='%d/%d - raider %d' % (idx, len(idlist), rid))
+        periodic(message='%d/%d - raider %d' % (idx + 1, len(idlist), rid))
         onquest = (rid in questing_ids) if questing_ids else \
             questing.onQuest(rid).call()
         periodic()
@@ -662,9 +663,8 @@ def import_raider_quests(db, idlist, questing_ids=None,
             params['reward_time'] = myquest.calcRaiderRewardTime(rid).call()
             periodic()
         sql_insert(params)
-    periodic(message='%d/%d - done' % (len(idlist), len(idlist)))
-    db.commit()
     periodic()
+    db.commit()
 
 
 def findraider(db, ident):
@@ -763,10 +763,10 @@ def request_update(raiders, basic=True, gear=True, recruiting=True,
     url = cf.crutil_api_url.rstrip('/')
     params = {'apikey': cf.crutil_api_key}
     if raiders is None:
-        periodic('Rebuilding')
+        periodic('Rebuilding', 'requesting remote database rebuild')
         r = req_get(session, url + '/rebuild', params=params, stream=True)
     else:
-        periodic('Updating')
+        periodic('Updating', 'requesting remote database update')
         params['ids[]'] = tuple(raiders)
         params.update(('no-' + k, 1) for k, v in (
             ('basic', basic), ('gear', gear), ('recruiting', recruiting),
@@ -779,6 +779,7 @@ def request_update(raiders, basic=True, gear=True, recruiting=True,
         periodic(message=line.decode())
 
     maybe_download_update(periodic=periodic, session=session)
+    periodic(message='done')
     return cf.opendb()
 
 
@@ -811,7 +812,7 @@ def maybe_download_update(periodic=noop, session=None):
     r = req_get(session, cf.crutil_api_url.rstrip('/') + '/latest')
     if r.status_code != 200:
         print('failed to query latest database status: %d %s' % (
-            r.status_code, r.reason))
+            r.status_code, r.reason), file=sys.stderr)
         return
     latest = r.json()
 
@@ -824,11 +825,16 @@ def maybe_download_update(periodic=noop, session=None):
     elif (latest['snapshot-started'] > current['snapshot-started'] or
           (latest['snapshot-started'] == current['snapshot-started'] and
            latest['snapshot-updated'] > current['snapshot-updated'])):
-        periodic('Updating database', 'from %d/%d to %d/%d' % (
+        periodic('Fetching database', 'updating from %d/%d to %d/%d' % (
             current['snapshot-started'], current['snapshot-updated'],
             latest['snapshot-started'], latest['snapshot-updated']))
         download_and_install_snapshot(latest['url'], periodic=periodic,
                                       session=session)
+    else:
+        periodic('Database up to date',
+                 'local version %d/%d not older than remote %d/%d' % (
+                     current['snapshot-started'], current['snapshot-updated'],
+                     latest['snapshot-started'], latest['snapshot-updated']))
 
 
 def schema_version_advice(version):

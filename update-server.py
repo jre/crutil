@@ -168,8 +168,6 @@ class BaseThread(threading.Thread):
             self.__lastsect = section
         if message:
             self._publish_status('%s: %s' % (self.__lastsect, message))
-        elif section:
-            self._publish_status(section)
         self._yield()
 
     def run(self):
@@ -185,6 +183,8 @@ class BaseThread(threading.Thread):
 
         params.update({'periodic': self._periodic, 'session': self._session})
         info, idlist = cru.import_or_update(db, **params)
+        self._periodic('Publishing database', message='dated %d/%d' % (
+            info['snapshot-started'], info['snapshot-updated']))
         dumpfile = self._dbdump_filename(info['snapshot-updated'])
         info['path'] = '%s/%s' % (self._baseurlpath, dumpfile)
         cru.gzip_to(db_path, self._wwwdir, dumpfile, periodic=self._periodic)
@@ -209,7 +209,7 @@ class RebuildThread(BaseThread):
         db_path = os.path.join(self._workdir, 'new.sqlite')
         while self.__building.wait():
             try:
-                self._periodic('Building new database')
+                self._periodic('Starting database rebuild')
                 if os.path.exists(db_path):
                     os.unlink(db_path)
                 _, all_rids = self._update_db(db_path)
@@ -228,8 +228,11 @@ class RebuildThread(BaseThread):
         if self._exiting:
             return 503, self._exitmsg
         with self.__sub_lock:
+            building = self.__building.is_set()
             self.__building.set()
             q = queue.SimpleQueue()
+            if building:
+                q.put('Database rebuild already in progress')
             self.__sub.append(q)
             return 200, q
 
@@ -255,7 +258,7 @@ class UpdateThread(BaseThread):
         while True:
             params, self.__status = self.__requests.get()
             try:
-                self._periodic('Updating database')
+                self._periodic('Starting database update')
                 if os.path.exists(self._new_db_path):
                     os.rename(self._new_db_path, self._base_db_path)
                 self._update_db(self._base_db_path, params)
