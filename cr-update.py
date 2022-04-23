@@ -508,7 +508,9 @@ def import_raider_extended(cur, raiders, periodic=noop):
             equipped_ids.append(local_id)
     newcount = geardb.save_to_sql(cur)
     periodic(message='added %d new item(s)' % (newcount,))
-    cur.execute('UPDATE gear SET equipped = FALSE')
+    cur.execute('UPDATE gear SET equipped = FALSE WHERE raider_id IN (%s)' % (
+        ','.join(('?',) * len(raiders))),
+                [r['tokenId'] for r in raiders])
     cur.executemany('UPDATE gear SET equipped = TRUE WHERE local_id = ?',
                     ((i,) for i in equipped_ids))
     periodic()
