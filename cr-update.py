@@ -815,10 +815,11 @@ def maybe_download_update(periodic=noop, session=None):
             r.status_code, r.reason), file=sys.stderr)
         return
     latest = r.json()
-
     if not latest:
+        print('no remote database available', file=sys.stderr)
         return
-    elif latest['schema-version'] != schema_version:
+
+    if latest['schema-version'] != schema_version:
         print(schema_version_advice(latest['schema-version']),
               file=sys.stderr)
         sys.exit(1)
