@@ -178,7 +178,7 @@ class CRConf():
                     md[sect][key]['value'] = self._loaded[sect][key]
         return md
 
-    def _get_eth_abi(self, name):
+    def _get_eth_abi(self, name, session=None):
         addr = self._contracts[name]
         filename = os.path.join(self._abidir, addr + '.json')
         if os.path.exists(filename):
@@ -190,7 +190,8 @@ class CRConf():
             'address': addr,
             'apikey': self.polygonscan_api_key,
         }
-        resp = requests.get(self.polygonscan_api_url, params=params)
+        resp = (session or requests).get(self.polygonscan_api_url,
+                                         params=params)
         data = resp.json()
         if data['message'] == 'OK':
             # XXX not safe for multiple instances
@@ -199,24 +200,25 @@ class CRConf():
             return data['result']
         raise ValueError(data['result'])
 
-    def get_polygon_web3(self):
+    def get_polygon_web3(self, session=None):
         if self._polygon_web3 is None:
             from web3 import Web3
-            rkw = {'timeout': 60}
-            self._polygon_web3 = Web3(Web3.HTTPProvider('%s/%s' % (
-                self.alchemy_api_url, self.alchemy_api_key),
-                                                        request_kwargs=rkw))
+            p = {'request_kwargs': {'timeout': 60}}
+            if session is not None:
+                p['session'] = session
+            self._polygon_web3 = Web3(Web3.HTTPProvider(
+                '%s/%s' % (self.alchemy_api_url, self.alchemy_api_key), **p))
         return self._polygon_web3
 
-    def get_eth_contract(self, name=None, address=None):
+    def get_eth_contract(self, name=None, address=None, session=None):
         assert (name is None) != (address is None)
         if name is None:
             if address not in self._contract_names:
                 raise ValueError('unknown contract address: %s' % (address,))
             name = self._contract_names[address]
         assert name in self._contracts
-        w3 = self.get_polygon_web3()
-        abi = self._get_eth_abi(name)
+        w3 = self.get_polygon_web3(session=session)
+        abi = self._get_eth_abi(name, session=session)
         return w3.eth.contract(address=self._contracts[name], abi=abi)
 
     def get_quest_name(self, name=None, address=None, short=False):
@@ -236,6 +238,12 @@ class CRConf():
         db = sqlite3.connect(self.db_path if dbpath is None else dbpath)
         cru.checkdb(db)
         return db
+
+    def requests_session(self, pool_connections=5):
+        s = requests.Session()
+        s.mount('https://', requests.adapters.HTTPAdapter(
+            pool_connections=pool_connections))
+        return s
 
 
 conf = CRConf()

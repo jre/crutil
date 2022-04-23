@@ -970,9 +970,10 @@ def main():
     global ampm
     ampm = args.ampm
     sorting = tuple(i.strip().lower() for i in args.sort.split(',') if i)
+    session = cf.requests_session()
 
     if cf.can_update_remote and not args.nodownload:
-        cru.maybe_download_update(periodic=cru.periodic_print)
+        cru.maybe_download_update(periodic=cru.periodic_print, session=session)
         db = cru.friendly_dbopen()
 
     if args.cmd is None or args.cmd == 'list':
@@ -992,7 +993,8 @@ def main():
 
     if args.update:
         if not rids_trusted:
-            owned, questing = cru.get_raider_ids(periodic=cru.periodic_print)
+            owned, questing = cru.get_raider_ids(periodic=cru.periodic_print,
+                                                 session=session)
             bad = set(rids) - owned - questing
             if bad:
                 print('raider(s) %s not owned by %s' % (
@@ -1001,7 +1003,7 @@ def main():
                 sys.exit(1)
         cru.maybe_load_geardb(db)
         db = cru.request_update(rids, recruiting=False, questing=False,
-                                periodic=cru.periodic_print)
+                                periodic=cru.periodic_print, session=session)
 
     if 'mob' in args and 'all' in args.mob:
         args.mob = FightSimReport.mobs

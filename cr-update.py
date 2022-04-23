@@ -43,6 +43,14 @@ def periodic_print(section=None, message=None):
         print(' %s' % (section,))
 
 
+def req_get(session, url, **kw):
+    return (session or requests).get(url, **kw)
+
+
+def req_post(session, url, **kw):
+    return (session or requests).post(url, **kw)
+
+
 def setupdb(db):
     cur = db.cursor()
 
@@ -357,12 +365,13 @@ def get_item_stats(item):
     return hash, name, stats
 
 
-def get_owned_raider_nfts(periodic=noop):
+def get_owned_raider_nfts(periodic=noop, session=None):
     all_nfts = []
     for owner in cf.nft_owners():
         periodic(message='querying raider NFTs for %s' % (owner,))
-        r = requests.get('%s/%s/getNFTs/?owner=%s&contractAddresses[]=%s' % (
-            cf.alchemy_api_url, cf.alchemy_api_key, owner, cf.nft_contract))
+        url = '%s/%s/getNFTs/?owner=%s&contractAddresses[]=%s' % (
+            cf.alchemy_api_url, cf.alchemy_api_key, owner, cf.nft_contract)
+        r = req_get(session, url)
         data = r.json()
         found = tuple(n['id']['tokenId']
                       for n in data['ownedNfts']
@@ -375,17 +384,18 @@ def get_owned_raider_nfts(periodic=noop):
     return all_nfts
 
 
-def lookup_nft_raider_id(tokenid):
-    r = requests.get('%s/%s/getNFTMetadata/?contractAddress=%s&tokenId=%s' % (
-        cf.alchemy_api_url, cf.alchemy_api_key, cf.nft_contract, tokenid))
+def lookup_nft_raider_id(tokenid, session=None):
+    url = '%s/%s/getNFTMetadata/?contractAddress=%s&tokenId=%s' % (
+        cf.alchemy_api_url, cf.alchemy_api_key, cf.nft_contract, tokenid)
+    r = req_get(session, url)
     data = r.json()
     # XXX fetch data['tokenUri']['gateway'] if metadata missing
     return data['metadata']['id']
 
 
-def get_questing_raider_ids(periodic=noop):
+def get_questing_raider_ids(periodic=noop, session=None):
     periodic(message='fetching contract ABI')
-    contract = cf.get_eth_contract('questing-raiders')
+    contract = cf.get_eth_contract('questing-raiders', session=session)
     ids = []
     for o in cf.nft_owners():
         periodic(message='querying questing raiders for %s' % (o,))
@@ -397,18 +407,19 @@ def get_questing_raider_ids(periodic=noop):
     return ids
 
 
-def get_raider_ids(periodic=noop):
+def get_raider_ids(periodic=noop, session=None):
     periodic('Counting raiders', 'counting owned raider NFTs on chain')
-    owned = set(lookup_nft_raider_id(i)
-                for i in get_owned_raider_nfts(periodic=periodic))
+    owned = set(lookup_nft_raider_id(i, session=session)
+                for i in get_owned_raider_nfts(periodic=periodic,
+                                               session=session))
     periodic(message='counting questing raider NFTs on chain')
-    questing = set(get_questing_raider_ids(periodic=periodic))
+    questing = set(get_questing_raider_ids(periodic=periodic, session=session))
     periodic(message='found %d raiders total' % (len(owned) + len(questing)))
     return owned, questing
 
 
-def import_all_raiders(db, periodic=noop):
-    owned, questing = get_raider_ids(periodic=periodic)
+def import_all_raiders(db, periodic=noop, session=None):
+    owned, questing = get_raider_ids(periodic=periodic, session=session)
     raiders = set(owned)
     raiders.update(questing)
 
@@ -426,22 +437,22 @@ def import_all_raiders(db, periodic=noop):
 
     cur.execute('BEGIN TRANSACTION')
     ids = tuple(sorted(raiders))
-    import_raiders(cur, ids, full=owned, periodic=periodic)
+    import_raiders(cur, ids, full=owned, periodic=periodic, session=session)
     db.commit()
     periodic()
     return ids, questing
 
 
-def import_some_raiders(db, rids, periodic=noop):
+def import_some_raiders(db, rids, periodic=noop, session=None):
     periodic()
     cur = db.cursor()
     cur.execute('BEGIN TRANSACTION')
-    import_raiders(cur, rids, full=True, periodic=periodic)
+    import_raiders(cur, rids, full=True, periodic=periodic, session=session)
     db.commit()
     periodic()
 
 
-def import_raiders(cur, all_ids, full=False, periodic=noop):
+def import_raiders(cur, all_ids, full=False, periodic=noop, session=None):
     last_weekly = cr_report.last_weekly_refresh(
         datetime.datetime.utcnow())
     periodic('Importing raider data from CR API')
@@ -450,8 +461,8 @@ def import_raiders(cur, all_ids, full=False, periodic=noop):
     for first in range(0, len(all_ids), 50):
         chunk_ids = all_ids[first:first+50]
         periodic(message='fetching %d raiders' % (len(chunk_ids),))
-        r = requests.get('%s/raiders/' % (cf.cr_api_url,),
-                         params={'ids[]': chunk_ids})
+        r = req_get(session, '%s/raiders/' % (cf.cr_api_url,),
+                    params={'ids[]': chunk_ids})
         periodic()
         data_rows = r.json()
 
@@ -481,8 +492,8 @@ def import_raiders(cur, all_ids, full=False, periodic=noop):
                     remaining, last_raid = rows[0]
                     if last_raid > last_weekly.timestamp() and remaining == 0:
                         continue
-            r = requests.get('%s/game/raider/%s' % (cf.cr_api_url, data['id']),
-                             params={'key': cf.cr_api_key})
+            r = req_get(session, '%s/game/raider/%s' % (
+                cf.cr_api_url, data['id']), params={'key': cf.cr_api_key})
             all_raider_meta.append(r.json())
         periodic(message='imported %d/%d' % (first + len(data_rows),
                                              len(all_ids)))
@@ -521,7 +532,7 @@ def iso_datetime_to_secs(isotime):
     return int(dt.timestamp())
 
 
-def import_raider_gear(db, periodic=noop):
+def import_raider_gear(db, periodic=noop, session=None):
     periodic('Importing guru data', message='querying API')
     cur = db.cursor()
     cur.execute('BEGIN TRANSACTION')
@@ -540,8 +551,8 @@ def import_raider_gear(db, periodic=noop):
     raiders = []
     for owner in cf.nft_owners():
         periodic(message='querying guru database for %s' % (owner,))
-        r = requests.post(crg_url, headers=hdr,
-                          json={'data': {'id': owner}})
+        r = req_post(session, crg_url, headers=hdr,
+                     json={'data': {'id': owner}})
         if not r.ok:
             # XXX how to signal failure here and keep going
             print('failed %d %s' % (r.status_code, r.reason), file=sys.stderr)
@@ -557,11 +568,12 @@ def import_raider_gear(db, periodic=noop):
     db.commit()
 
 
-def import_raider_recruitment(db, idlist, full=False, periodic=noop):
+def import_raider_recruitment(db, idlist, full=False,
+                              periodic=noop, session=None):
     periodic('Importing recruitment data from chain',
              message='fetching contract ABI')
     cur = db.cursor()
-    recruiting = cf.get_eth_contract('recruiting').functions
+    recruiting = cf.get_eth_contract('recruiting', session=session).functions
     for idx, rid in enumerate(sorted(idlist)):
         periodic(message='%d/%d - raider %d' % (idx, len(idlist), rid))
         cost, next_time = None, None
@@ -598,7 +610,7 @@ def import_raider_recruitment(db, idlist, full=False, periodic=noop):
 
 
 def import_raider_quests(db, idlist, questing_ids=None,
-                         periodic=noop):
+                         periodic=noop, session=None):
     import web3
 
     def sql_insert(p):
@@ -611,7 +623,8 @@ def import_raider_quests(db, idlist, questing_ids=None,
     cur = db.cursor()
     periodic('Importing quest data from chain',
              message='fetching contract ABI')
-    questing = cf.get_eth_contract('questing-raiders').functions
+    questing = cf.get_eth_contract('questing-raiders',
+                                   session=session).functions
 
     for idx, rid in enumerate(sorted(idlist)):
         periodic(message='%d/%d - raider %d' % (idx, len(idlist), rid))
@@ -628,7 +641,8 @@ def import_raider_quests(db, idlist, questing_ids=None,
         periodic()
 
         try:
-            myquest = cf.get_eth_contract(address=params['contract']).functions
+            myquest = cf.get_eth_contract(address=params['contract'],
+                                          session=session).functions
             periodic()
         except ValueError:
             print('unknown quest contract for raider %d: %s' % (
@@ -680,7 +694,9 @@ def findraider(db, ident):
 
 
 def import_or_update(db, started_at=None, raiders=None, basic=True, gear=True,
-                     recruiting=True, questing=True, periodic=noop):
+                     recruiting=True, questing=True,
+                     periodic=noop, session=None):
+    p = {'periodic': periodic, 'session': session}
     info = {'schema-version': schema_version}
     cur = db.cursor()
     questers = None
@@ -695,20 +711,19 @@ def import_or_update(db, started_at=None, raiders=None, basic=True, gear=True,
         db.commit()
         info['snapshot-started'] = int(started_at.timestamp())
         need_finish = True
-        raiders, questers = import_all_raiders(db, periodic=periodic)
+        raiders, questers = import_all_raiders(db, **p)
     else:
         periodic('Updating raider(s) %s' % (raiders,))
         cur.execute("SELECT value FROM meta WHERE name = 'snapshot-started'")
         info['snapshot-started'] = cur.fetchone()[0]
         if basic:
-            import_some_raiders(db, raiders, periodic=periodic)
+            import_some_raiders(db, raiders, **p)
     if gear:
-        import_raider_gear(db, periodic=periodic)
+        import_raider_gear(db, **p)
     if recruiting:
-        import_raider_recruitment(db, raiders, periodic=periodic)
+        import_raider_recruitment(db, raiders, **p)
     if questing:
-        import_raider_quests(db, raiders, questing_ids=questers,
-                             periodic=periodic)
+        import_raider_quests(db, raiders, questing_ids=questers, **p)
 
     finished_at = datetime.datetime.utcnow()
     cur.execute('INSERT OR REPLACE INTO meta (name, value) VALUES (?, ?)',
@@ -721,14 +736,15 @@ def import_or_update(db, started_at=None, raiders=None, basic=True, gear=True,
     return info, raiders
 
 
-def ensure_raider_ids(db, val, usage):
+def ensure_raider_ids(db, val, usage, session=None):
     raider, trusted = findraider(db, val)
     if raider is None:
         print('No raider named "%s" found' % (val,), file=sys.stderr)
         usage()
         sys.exit(1)
     elif not trusted:
-        owned, questing = get_raider_ids(periodic=periodic_print)
+        owned, questing = get_raider_ids(periodic=periodic_print,
+                                         session=session)
         if raider not in owned and raider not in questing:
             print('raider %d not owned by %s' % (
                 raider, ' '.join(cf.nft_owners())), file=sys.stderr)
@@ -737,38 +753,39 @@ def ensure_raider_ids(db, val, usage):
 
 
 def request_update(raiders, basic=True, gear=True, recruiting=True,
-                   questing=True, periodic=noop, forcelocal=None):
+                   questing=True, periodic=noop, forcelocal=None,
+                   session=None):
     if not cf.can_update_remote or forcelocal:
         db = cf.opendb()
         import_or_update(db, raiders=raiders, basic=basic, gear=gear,
                          recruiting=recruiting, questing=questing,
-                         periodic=periodic)
+                         periodic=periodic, session=session)
         return db
 
     url = cf.crutil_api_url.rstrip('/')
     params = {'apikey': cf.crutil_api_key}
     if raiders is None:
         periodic('Rebuilding')
-        r = requests.get(url + '/rebuild', params, stream=True)
+        r = req_get(session, url + '/rebuild', params=params, stream=True)
     else:
         periodic('Updating')
         params['ids[]'] = tuple(raiders)
-        r = requests.get(url + '/update', params, stream=True)
+        r = req_get(session, url + '/update', params=params, stream=True)
     for line in r.iter_lines():
         periodic(message=line.decode())
 
-    maybe_download_update(periodic=periodic)
+    maybe_download_update(periodic=periodic, session=session)
     return cf.opendb()
 
 
-def download_and_install_snapshot(url, periodic=noop):
+def download_and_install_snapshot(url, periodic=noop, session=None):
     with tempfile.TemporaryDirectory(prefix='crutil') as tmp:
         gzpath = os.path.join(tmp, 'raiders.sqlite.gz')
         dbfile = 'raiders.sqlite'
         dbpath = os.path.join(tmp, dbfile)
         periodic(message='downloading %s' % (url,))
         with open(gzpath, 'wb') as gzfh:
-            r = requests.get(url)
+            r = req_get(session, url)
             for data in r.iter_content(chunk_size=16384):
                 gzfh.write(data)
         gzip_from(gzpath, tmp, dbfile, periodic=periodic)
@@ -777,7 +794,7 @@ def download_and_install_snapshot(url, periodic=noop):
         mv_to(dbpath, cf.db_path)
 
 
-def maybe_download_update(periodic=noop):
+def maybe_download_update(periodic=noop, session=None):
     current = {'snapshot-started': 0, 'snapshot-updated': 0}
     try:
         db = cf.opendb()
@@ -787,7 +804,7 @@ def maybe_download_update(periodic=noop):
         current.update(cur.fetchall())
     except sqlite3.OperationalError:
         pass
-    r = requests.get(cf.crutil_api_url.rstrip('/') + '/latest')
+    r = req_get(session, cf.crutil_api_url.rstrip('/') + '/latest')
     latest = r.json()
 
     if not latest:
@@ -802,7 +819,8 @@ def maybe_download_update(periodic=noop):
         periodic('Updating database', 'from %d/%d to %d/%d' % (
             current['snapshot-started'], current['snapshot-updated'],
             latest['snapshot-started'], latest['snapshot-updated']))
-        download_and_install_snapshot(latest['url'], periodic=periodic)
+        download_and_install_snapshot(latest['url'], periodic=periodic,
+                                      session=session)
 
 
 def schema_version_advice(version):
@@ -857,19 +875,21 @@ def main():
               file=sys.stderr)
         sys.exit(1)
 
+    session = cf.requests_session()
     cf.makedirs()
     if cf.can_update_remote and not args.nodownload:
-        maybe_download_update(periodic=periodic_print)
+        maybe_download_update(periodic=periodic_print, session=session)
     db = friendly_dbopen()
 
     raiders = None
     if args.raider is not None:
-        raiders = ensure_raider_ids(db, args.raider, parser.print_usage),
+        raiders = ensure_raider_ids(db, args.raider, parser.print_usage,
+                                    session=session),
 
     maybe_load_geardb(db, forcelocal=args.local)
     request_update(raiders, gear=args.gear, recruiting=args.recruiting,
                    questing=args.questing, periodic=periodic_print,
-                   forcelocal=args.local)
+                   forcelocal=args.local, session=session)
 
 
 if __name__ == '__main__':

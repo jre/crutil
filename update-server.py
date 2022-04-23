@@ -137,6 +137,7 @@ class BaseThread(threading.Thread):
         self._wwwdir = wwwdir
         self._baseurlpath = baseurlpath.rstrip('/')
         self._lastsect = ''
+        self._session = cf.requests_session()
 
     def _yield(self):
         # yield control to signal handlers and other threads
@@ -161,12 +162,13 @@ class BaseThread(threading.Thread):
         cru.setupdb(db)
         self._periodic()
 
-        params['periodic'] = self._periodic
+        params.update({'periodic': self._periodic, 'session': self._session})
         info, idlist = cru.import_or_update(db, **params)
         dumpfile = self._dbdump_filename(info['snapshot-updated'])
         info['path'] = '%s/%s' % (self._baseurlpath, dumpfile)
         cru.gzip_to(db_path, self._wwwdir, dumpfile, periodic=self._periodic)
         update_latest(info)
+        self._session.close()
         return info, idlist
 
 
@@ -263,7 +265,7 @@ def main():
     workdir = os.path.expanduser('~/crudb-workdir')
     os.makedirs(workdir, exist_ok=True)
     load_latest(os.path.join(workdir, 'latest.json'))
-    all_raider_ids.update(*cru.get_raider_ids())
+    all_raider_ids.update(*cru.get_raider_ids(session=cf.requests_session()))
 
     global rebuilder, updater
     thrp = {'workdir': workdir, 'wwwdir': args.dbdir,
