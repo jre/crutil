@@ -1004,6 +1004,8 @@ def main():
         cru.maybe_load_geardb(db)
         db = cru.request_update(rids, recruiting=False, questing=False,
                                 periodic=cru.periodic_print, session=session)
+        if db is None:
+            sys.exit(1)
 
     if 'mob' in args and 'all' in args.mob:
         args.mob = FightSimReport.mobs

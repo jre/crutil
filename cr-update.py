@@ -782,6 +782,9 @@ def request_update(raiders, basic=True, gear=True, recruiting=True,
             ('basic', basic), ('gear', gear), ('recruiting', recruiting),
             ('questing', questing)) if not v)
         r = req_get(session, url + '/update', params=params, stream=True)
+    if r.status_code != 200:
+        periodic(message='request failed: %d %s' % (r.status_code, r.reason))
+        return
     for line in r.iter_lines():
         periodic(message=line.decode())
 
@@ -816,6 +819,10 @@ def maybe_download_update(periodic=noop, session=None):
     except sqlite3.OperationalError:
         pass
     r = req_get(session, cf.crutil_api_url.rstrip('/') + '/latest')
+    if r.status_code != 200:
+        print('failed to query latest database status: %d %s' % (
+            r.status_code, r.reason))
+        return
     latest = r.json()
 
     if not latest:
@@ -898,9 +905,11 @@ def main():
                                     session=session)
 
     maybe_load_geardb(db, forcelocal=args.local)
-    request_update(raiders, gear=args.gear, recruiting=args.recruiting,
-                   questing=args.questing, periodic=periodic_print,
-                   forcelocal=args.local, session=session)
+    res = request_update(raiders, gear=args.gear, recruiting=args.recruiting,
+                         questing=args.questing, periodic=periodic_print,
+                         forcelocal=args.local, session=session)
+    if res is None:
+        sys.exit(1)
 
 
 if __name__ == '__main__':

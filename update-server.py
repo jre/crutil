@@ -87,7 +87,11 @@ def handle_latest():
 def handle_rebuild():
     if api_key is not None and flask.request.args.get('apikey') != api_key:
         return text_response('invalid api key', 403)
-    return status_generator_response(rebuilder.request_db_rebuild())
+
+    resp_code, resp_body = rebuilder.request_db_rebuild()
+    if isinstance(resp_body, str):
+        return text_response(resp_body, resp_code)
+    return status_generator_response(resp_body, resp_code)
 
 
 @webapp.route("/update")
@@ -109,7 +113,11 @@ def handle_update():
                 params[short] = False
                 continue
         return text_response('unknown parameter: %s' % (key,), 400)
-    return status_generator_response(updater.request_db_update(rids, params))
+
+    resp_code, resp_body = updater.request_db_update(rids, params)
+    if isinstance(resp_body, str):
+        return text_response(resp_body, resp_code)
+    return status_generator_response(resp_body, resp_code)
 
 
 def text_response(body, code):
@@ -118,19 +126,22 @@ def text_response(body, code):
     return resp
 
 
-def status_generator_response(status_queue):
+def status_generator_response(status_queue, code):
     def status_generator():
         while True:
             msg = status_queue.get()
             if msg is None:
                 return
             yield str(msg) + '\n'
-    resp = webapp.response_class(status_generator(), 200)
+    resp = webapp.response_class(status_generator(), code)
     resp.mimetype = 'text/plain'
     return resp
 
 
 class BaseThread(threading.Thread):
+    class ExitThread(Exception):
+        pass
+
     def __init__(self, name, workdir, wwwdir, baseurlpath):
         super().__init__(name=name)
         self._workdir = workdir
@@ -138,6 +149,8 @@ class BaseThread(threading.Thread):
         self._baseurlpath = baseurlpath.rstrip('/')
         self._lastsect = ''
         self._session = cf.requests_session()
+        self._exiting = False
+        self._exitmsg = 'Server shutting down'
 
     def _yield(self):
         # yield control to signal handlers and other threads
@@ -149,6 +162,8 @@ class BaseThread(threading.Thread):
             cru.schema_version, when.isoformat(timespec='seconds'))
 
     def _periodic(self, section=None, message=None):
+        if self._exiting:
+            raise self.ExitThread()
         if section:
             self.__lastsect = section
         if message:
@@ -156,6 +171,12 @@ class BaseThread(threading.Thread):
         elif section:
             self._publish_status(section)
         self._yield()
+
+    def run(self):
+        try:
+            self._run()
+        except self.ExitThread:
+            self._publish_eof()
 
     def _update_db(self, db_path, params={}):
         db = cf.opendb(db_path)
@@ -171,6 +192,10 @@ class BaseThread(threading.Thread):
         self._session.close()
         return info, idlist
 
+    def _publish_eof(self):
+        self._publish_status(self._exitmsg)
+        self._publish_status(None)
+
 
 class RebuildThread(BaseThread):
     def __init__(self, **kw):
@@ -179,7 +204,7 @@ class RebuildThread(BaseThread):
         self.__sub = []
         self.__sub_lock = threading.Lock()
 
-    def run(self):
+    def _run(self):
         global all_raider_ids
         db_path = os.path.join(self._workdir, 'new.sqlite')
         while self.__building.wait():
@@ -200,11 +225,18 @@ class RebuildThread(BaseThread):
                 self.__sub = []
 
     def request_db_rebuild(self):
+        if self._exiting:
+            return 503, self._exitmsg
         with self.__sub_lock:
             self.__building.set()
             q = queue.SimpleQueue()
             self.__sub.append(q)
-            return q
+            return 200, q
+
+    def request_exit(self):
+        with self.__sub_lock:
+            self._exiting = True
+            self.__building.set()
 
     def _publish_status(self, msg):
         for i in self.__sub:
@@ -219,7 +251,7 @@ class UpdateThread(BaseThread):
         self._base_db_path = os.path.join(self._workdir, 'update-base.sqlite')
         self._new_db_path = os.path.join(self._workdir, 'new-base-db.sqlite')
 
-    def run(self):
+    def _run(self):
         while True:
             params, self.__status = self.__requests.get()
             try:
@@ -235,16 +267,44 @@ class UpdateThread(BaseThread):
             self.__status = None
 
     def request_db_update(self, raiders, params={}):
+        if self._exiting:
+            return 503, self._exitmsg
         params = params.copy()
         assert not set(raiders).difference(all_raider_ids)
         params['raiders'] = sorted(raiders)
         status = queue.SimpleQueue()
         self.__requests.put((params, status))
-        return status
+        return 200, status
+
+    def _publish_eof(self):
+        super()._publish_eof()
+        self.__requests.put((None, None))
+        while True:
+            _, q = self.__requests.get_nowait()
+            if q is None:
+                return
+            q.put(self._exitmsg)
+            q.put(None)
+
+    def request_exit(self):
+        self._exiting = True
+        self.__requests.put((None, None))
 
     def _publish_status(self, msg):
         if self.__status is not None:
             self.__status.put(msg)
+
+
+class QuitterServer(WSGIServer):
+    def _intHandler(self, signum, frame):
+        super()._intHandler(signum, frame)
+        rebuilder.request_exit()
+        updater.request_exit()
+
+    def _hupHandler(self, signum, frame):
+        super()._hupHandler(signum, frame)
+        rebuilder.request_exit()
+        updater.request_exit()
 
 
 def main():
@@ -277,9 +337,9 @@ def main():
 
     rebuilder.start()
     updater.start()
-    WSGIServer(webapp, multiplexed=True,
-               bindAddress='/var/www/crutil/fastcgi.sock',
-               umask=0o111).run()
+    QuitterServer(webapp, multiplexed=True,
+                  bindAddress='/var/www/crutil/fastcgi.sock',
+                  umask=0o111).run()
 
 
 if __name__ == '__main__':
