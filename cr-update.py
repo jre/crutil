@@ -437,7 +437,7 @@ def import_all_raiders(db, periodic=noop, session=None):
 
     cur.execute('BEGIN TRANSACTION')
     ids = tuple(sorted(raiders))
-    import_raiders(cur, ids, full=owned, periodic=periodic, session=session)
+    import_raiders(cur, ids, periodic=periodic, session=session)
     db.commit()
     periodic()
     return ids, questing
@@ -447,14 +447,12 @@ def import_some_raiders(db, rids, periodic=noop, session=None):
     periodic()
     cur = db.cursor()
     cur.execute('BEGIN TRANSACTION')
-    import_raiders(cur, rids, full=True, periodic=periodic, session=session)
+    import_raiders(cur, rids, periodic=periodic, session=session)
     db.commit()
     periodic()
 
 
-def import_raiders(cur, all_ids, full=False, periodic=noop, session=None):
-    last_weekly = cr_report.last_weekly_refresh(
-        datetime.datetime.utcnow())
+def import_raiders(cur, all_ids, periodic=noop, session=None):
     periodic('Importing raider data from CR API')
 
     all_raider_meta = []
@@ -484,14 +482,6 @@ def import_raiders(cur, all_ids, full=False, periodic=noop, session=None):
                         params)
 
             periodic()
-            if not full or (isinstance(full, set) and data['id'] not in full):
-                cur.execute('''SELECT remaining, last_raid
-                    FROM raids WHERE raider = ?''', (data['id'],))
-                rows = tuple(cur.fetchall())
-                if len(rows):
-                    remaining, last_raid = rows[0]
-                    if last_raid > last_weekly.timestamp() and remaining == 0:
-                        continue
             r = req_get(session, '%s/game/raider/%s' % (
                 cf.cr_api_url, data['id']), params={'key': cf.cr_api_key})
             all_raider_meta.append(r.json())
