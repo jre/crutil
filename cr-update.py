@@ -736,20 +736,28 @@ def import_or_update(db, started_at=None, raiders=None, basic=True, gear=True,
     return info, raiders
 
 
-def ensure_raider_ids(db, val, usage, session=None):
-    raider, trusted = findraider(db, val)
-    if raider is None:
-        print('No raider named "%s" found' % (val,), file=sys.stderr)
-        usage()
-        sys.exit(1)
-    elif not trusted:
+def ensure_raider_ids(db, vals, usage, session=None):
+    raiders = []
+    all_trusted = True
+    for val in vals:
+        raider_id, trusted = findraider(db, val)
+        if raider_id is None:
+            print('No raider named "%s" found' % (val,), file=sys.stderr)
+            usage()
+            sys.exit(1)
+        raiders.append(raider_id)
+        all_trusted &= trusted
+    if not all_trusted:
         owned, questing = get_raider_ids(periodic=periodic_print,
                                          session=session)
-        if raider not in owned and raider not in questing:
-            print('raider %d not owned by %s' % (
-                raider, ' '.join(cf.nft_owners())), file=sys.stderr)
+        all_known = set(owned).union(set(questing))
+        unknown = set(raiders).difference(all_known)
+        if unknown:
+            print('raider(s) not owned by %s: %s' % (
+                ' '.join(cf.nft_owners()), ' '.join(map(str, unknown))),
+                  file=sys.stderr)
             sys.exit(1)
-    return raider
+    return raiders
 
 
 def request_update(raiders, basic=True, gear=True, recruiting=True,
@@ -770,6 +778,9 @@ def request_update(raiders, basic=True, gear=True, recruiting=True,
     else:
         periodic('Updating')
         params['ids[]'] = tuple(raiders)
+        params.update(('no-' + k, 1) for k, v in (
+            ('basic', basic), ('gear', gear), ('recruiting', recruiting),
+            ('questing', questing)) if not v)
         r = req_get(session, url + '/update', params=params, stream=True)
     for line in r.iter_lines():
         periodic(message=line.decode())
@@ -848,8 +859,8 @@ def maybe_load_geardb(db, forcelocal=None):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-r', dest='raider',
-                        help='Update only a single raider')
+    parser.add_argument('raider', nargs='*',
+                        help='Update only a the specified raider(s)')
     parser.add_argument('-U', dest='nodownload', action='store_true',
                         help='Do not download database updates')
     parser.add_argument('-L', dest='local',
@@ -882,9 +893,9 @@ def main():
     db = friendly_dbopen()
 
     raiders = None
-    if args.raider is not None:
+    if len(args.raider):
         raiders = ensure_raider_ids(db, args.raider, parser.print_usage,
-                                    session=session),
+                                    session=session)
 
     maybe_load_geardb(db, forcelocal=args.local)
     request_update(raiders, gear=args.gear, recruiting=args.recruiting,
