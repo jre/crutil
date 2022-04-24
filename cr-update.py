@@ -359,7 +359,7 @@ def hash_gear_uniq(name, *stats):
 
 def get_item_stats(item):
     name = item['item']['name']
-    stats_dict = item['item'].get('stats', {})
+    stats_dict = item['item'].get('stats') or {}
     stats = tuple(stats_dict.get(i, 0) for i in cr_conf.stats)
     hash = hash_gear_uniq(name, *stats)
     return hash, name, stats
