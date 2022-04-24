@@ -1,0 +1,4 @@
+appdirs
+requests
+supervisor
+web3

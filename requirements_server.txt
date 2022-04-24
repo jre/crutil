@@ -1,0 +1,6 @@
+appdirs
+flask
+flup
+requests
+supervisor
+web3
