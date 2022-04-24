@@ -18,7 +18,7 @@ nostats = (0, 0, 0, 0, 0, 0)
 
 
 def nothing(slot):
-    assert slot in cr_conf.slots
+    assert slot in cf.slot_names
     return 'nothing (%s)' % (slot,)
 
 
@@ -317,7 +317,7 @@ def get_raider_slots(cur, rid, fill=False):
         g_slot = row[0]
         g_name = row[1]
         g_stats = row[2:]
-        assert g_slot in cr_conf.slots
+        assert g_slot in cf.slot_names
         names[g_slot] = g_name
         stats[g_slot] = g_stats
 
@@ -332,8 +332,8 @@ def get_equipped(cur, rid):
     cur.execute('SELECT slot, name FROM gear WHERE raider_id = ? AND equipped',
                 (rid,))
     gear = dict(cur.fetchall())
-    assert not set(gear).difference(cr_conf.slots), cr_conf.slots
-    return tuple(gear[i] for i in cr_conf.slots if i in gear)
+    assert not set(gear).difference(cf.slot_names), cf.slot_names
+    return tuple(gear[i] for i in cf.slot_names if i in gear)
 
 
 def skew_stats(stats):

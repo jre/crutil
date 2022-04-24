@@ -7,11 +7,13 @@ import requests
 
 appname = 'crutil'
 
-slots = ('main_hand', 'dress', 'knickknack', 'finger', 'neck', 'background')
-stats = ('strength', 'intelligence', 'agility', 'wisdom', 'charm', 'luck')
-
 
 class CRConf():
+    slot_names = ('background', 'dress', 'finger', 'knickknack',
+                  'main_hand', 'neck')
+    stat_names = ('strength', 'intelligence', 'agility',
+                  'wisdom', 'charm', 'luck')
+
     def __init__(self):
         self._confdir = appdirs.user_config_dir(appname)
         self._datadir = appdirs.user_data_dir(appname)

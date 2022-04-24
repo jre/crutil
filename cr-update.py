@@ -279,7 +279,7 @@ class GearDB():
 
         cur.executemany('''INSERT INTO gear (hash, raider_id, slot, name, %s)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''' % (
-                ','.join(cr_conf.stats)), newrows)
+                ','.join(cf.stat_names)), newrows)
         cur.executemany('''INSERT INTO raids (raider, last_endless)
             VALUES (:r, :e) ON CONFLICT (raider) DO UPDATE
             SET last_endless = :e WHERE raider = :r''', endless)
@@ -360,7 +360,7 @@ def hash_gear_uniq(name, *stats):
 def get_item_stats(item):
     name = item['item']['name']
     stats_dict = item['item'].get('stats') or {}
-    stats = tuple(stats_dict.get(i, 0) for i in cr_conf.stats)
+    stats = tuple(stats_dict.get(i, 0) for i in cf.stat_names)
     hash = hash_gear_uniq(name, *stats)
     return hash, name, stats
 
