@@ -1,4 +1,5 @@
 appdirs
+mmh3
 requests
 supervisor
 web3

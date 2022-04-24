@@ -1,6 +1,7 @@
 appdirs
 flask
 flup
+mmh3
 requests
 supervisor
 web3
