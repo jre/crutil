@@ -126,7 +126,7 @@ def schema_upgrade_v1(db):
         value INTEGER)''')
     cur.execute('''INSERT INTO meta (name, value)
         VALUES (?, ?), (?, ?), (?, ?), (?, ?)''',
-                ('schema-version', 2, 'snapshot-started', 0,
+                ('schema-version', 0, 'snapshot-started', 0,
                  'snapshot-updated', 0, 'snapshot-finished', 0))
     db.commit()
 
