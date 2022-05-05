@@ -103,30 +103,20 @@ def last_daily_refresh(now):
     return target
 
 
-def last_weekly_refresh(now):
-    today = datetime.date.fromtimestamp(now.timestamp())
-    if today.weekday() > cf.cr_newraid_weekday:
-        future_wed_delta = 7 - (today.weekday() - cf.cr_newraid_weekday)
-    else:
-        future_wed_delta = 7 + (cf.cr_newraid_weekday - today.weekday())
-    wed = today + datetime.timedelta(days=future_wed_delta)
-    target = datetime.datetime(wed.year, wed.month, wed.day,
-                               *cf.cr_newraid_time)
-    week_delta = datetime.timedelta(days=7)
-    while target > now:
-        target -= week_delta
-    return target
-
-
-def get_raider_raids(cur, rid, last_daily, last_weekly):
+def get_raider_raids(cur, rid, last_daily):
     cur.execute('''SELECT remaining, last_raid, last_endless
         FROM raids WHERE raider = ?''', (rid,))
     rows = tuple(cur.fetchall())
     if len(rows) == 0:
         return -1, -1
     raids_left, last_raid, last_endless = rows[0]
-    if last_raid < last_weekly.timestamp():
-        raids_left = cf.cr_weekly_raids
+
+    day_secs = datetime.timedelta(days=1).total_seconds()
+    while (raids_left < cf.cr_weekly_raids and
+           last_raid < last_daily.timestamp()):
+        raids_left += 1
+        last_raid += day_secs
+
     if not last_endless:
         return raids_left, -1
     endless_left = int(last_endless < last_daily.timestamp())
@@ -261,11 +251,10 @@ class RaiderListReport(TabularReport):
         rows = tuple(cur.fetchall())
         now = datetime.datetime.utcnow()
         last_daily = last_daily_refresh(now)
-        last_weekly = last_weekly_refresh(now)
 
         for id, name, lvl, gen, race in rows:
             lvl_name = '[%d] %s' % (lvl, name)
-            raids, endless = get_raider_raids(cur, id, last_daily, last_weekly)
+            raids, endless = get_raider_raids(cur, id, last_daily)
             recruit_time, recruit_cost = get_raider_recruiting(cur, id, now)
             quest_status, quest_back = get_raider_questing(cur, id, now)
             yield (id, lvl_name, gen, race, raids, endless,
@@ -822,12 +811,11 @@ class QuestReport(TabularReport):
         now = datetime.datetime.utcnow()
         now_secs = int(now.timestamp())
         last_daily = last_daily_refresh(now)
-        last_weekly = last_weekly_refresh(now)
         rows = list(cur.fetchall())
         for rid, level, name, addr, started, retdiv, reward in rows:
             if rid not in ids:
                 continue
-            raids, endl = get_raider_raids(cur, rid, last_daily, last_weekly)
+            raids, endl = get_raider_raids(cur, rid, last_daily)
             ret = [rid,
                    '[%d] %s' % (level, name),
                    raids,

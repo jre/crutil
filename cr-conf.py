@@ -30,9 +30,8 @@ class CRConf():
         self.crg_domain = 'europe-west3-cryptoraiders-guru.cloudfunctions.net'
         self.crg_url = 'https://www.cryptoraiders.guru'
         # raids refresh on wednesday, 6am UTC
-        self.cr_newraid_weekday = 2
         self.cr_newraid_time = (6, 0, 0)
-        self.cr_weekly_raids = 5
+        self.cr_weekly_raids = 7
 
         # known verified contracts, which we can retrieve the ABI for
         self._contract_names = {
