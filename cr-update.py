@@ -722,7 +722,7 @@ def import_raider_quests(db, idlist, questing_ids=None,
             periodic()
         else:
             questing_secs = myquest.timeQuesting(rid).call()
-            params['started_on'] = utcnow_secs - questing_secs
+            params['started_on'] = int(utcnow_secs - questing_secs)
             periodic()
             params['return_divisor'] = myquest.returnHomeTimeDivisor().call()
             periodic()
