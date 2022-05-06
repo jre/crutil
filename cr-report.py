@@ -279,7 +279,8 @@ def show_all_raiders(db, sorting=()):
         'int': str,
         'positive_count': fmt_positive_count,
         'interval_seconds': fmt_raider_timedelta,
-        'delta_seconds': lambda v: fmt_timesecs_nicely(v + utcnow_secs, adj),
+        'delta_seconds': lambda v: fmt_timesecs_nicely(
+            v + utcnow_secs if v > 0 else v, adj),
         'epoch_seconds': lambda v: fmt_timesecs_nicely(v, adj),
     }
     report.print(raw_tbl, fmt)
