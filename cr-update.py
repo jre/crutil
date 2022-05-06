@@ -309,6 +309,91 @@ class GearDB():
 geardb = GearDB()
 
 
+class GoogAuth():
+    def __init__(self):
+        self._data = {}
+        self._intapihost = requests.utils.urlparse(cf.cr_intapi_url).hostname
+        if os.path.exists(cf.cr_authtoken_path):
+            self._data = json.load(open(cf.cr_authtoken_path))
+
+    def _login_error(self, req):
+        msg = 'failed to log in to %s as %s' % (self._intapihost, cf.cr_email)
+        if req is None:
+            raise Exception(msg)
+        body = req.json()
+        if 'error' in body:
+            raise Exception('%s: %s' % (msg, body['error']['message']))
+        else:
+            raise Exception('%s: %d %s' % (msg, req.status_code, req.reason))
+
+    def _do_login(self, session, periodic=noop):
+        url = cf.goog_idtk_url + '/relyingparty/verifyPassword'
+        params = {'key': cf.cr_googid_api_key}
+        body = {'email': cf.cr_email,
+                'password': cf.cr_pass,
+                'returnSecureToken': True}
+        r = req_post(session, url, params=params, json=body)
+        data = r.json()
+        periodic(message='POST %s -> %d %s' % (url, r.status_code, data))
+        if not r.ok or 'error' in data:
+            self._login_error(r)
+        now = datetime.datetime.utcnow()
+        data['cru_expire_secs'] = int(now.timestamp()) + int(data['expiresIn'])
+        self._data = data
+        self._do_save()
+        return True
+
+    def _do_save(self):
+        with permatempfile(cf.cr_authtoken_path, suffix='.json',
+                           binary=False) as fh:
+            json.dump(self._data, fh)
+
+    def ensure_login(self, session, periodic=noop):
+        periodic('Logging in to %s' % (self._intapihost,))
+
+        if not self._data:
+            self._do_login(session, periodic=periodic)
+        now = datetime.datetime.utcnow()
+        if now.timestamp() > self._data.get('cru_expire_secs', 0):
+            self.refresh_token(session, periodic=periodic)
+        if not self.verify_token(session, periodic=periodic):
+            if not self._do_login(session, periodic=periodic) or \
+               not self.verify_token(session, periodic=periodic):
+                self._login_error(None)
+        session.cookies.set('token', self._data['idToken'],
+                            domain=self._intapihost)
+
+    def verify_token(self, session, periodic=noop):
+        url = cf.goog_idtk_url + '/relyingparty/getAccountInfo'
+        params = {'key': cf.cr_googid_api_key}
+        body = {'idToken': self._data['idToken']}
+        r = req_post(session, url, params=params, json=body)
+        data = r.json()
+        periodic(message='POST %s -> %d %s' % (url, r.status_code, data))
+        if r.ok:
+            return True
+        elif data.get('error', {}).get('message') == 'INVALID_ID_TOKEN':
+            return False
+        else:
+            self._login_error(r)
+
+    def refresh_token(self, session, periodic=noop):
+        params = {'key': cf.cr_googid_api_key}
+        body = {'grant_type': 'refresh_token',
+                'refresh_token': self._data['refreshToken']}
+        r = req_post(session, cf.goog_sectok_url, params=params, data=body)
+        data = r.json()
+        periodic(message='POST %s -> %d %s' % (
+            cf.goog_sectok_url, r.status_code, data))
+        if not r.ok or 'error' in data:
+            self._login_error(r)
+        now = datetime.datetime.utcnow()
+        self._data['refreshToken'] = data['refresh_token']
+        self._data['cru_expire_secs'] = int(now.timestamp()) + \
+            int(data['expires_in'])
+        self._do_save()
+
+
 @contextlib.contextmanager
 def permatempfile(dest, suffix=None, mode=0o644, binary=True):
     destdir, destfile = os.path.split(dest)
@@ -358,6 +443,7 @@ def hash_gear_uniq(name, *stats):
 
 
 def get_item_stats(item):
+    # XXX should switch hash to item['item']['internalName'] instead
     name = item['item']['name']
     stats_dict = item['item'].get('stats') or {}
     stats = tuple(stats_dict.get(i, 0) for i in cf.stat_names)
@@ -525,38 +611,18 @@ def iso_datetime_to_secs(isotime):
 
 
 def import_raider_gear(db, periodic=noop, session=None):
-    periodic('Importing guru data')
+    periodic('Importing raider data from private CR API')
+    r = req_get(session, cf.cr_intapi_url + '/raiders')
+    if not r.ok:
+        periodic(message='error: server responses %d %s' % (
+            r.status_code, r.reason))
+        return
+    data = r.json()
+    periodic(message='found %d non-questing raiders' % (
+        len(data['raiders']),))
     cur = db.cursor()
     cur.execute('BEGIN TRANSACTION')
-
-    # this ultimately comes from https://play.cryptoraiders.xyz/api/raiders
-    # but that endpoint requires a cookie
-    crg_domain = 'europe-west3-cryptoraiders-guru.cloudfunctions.net'
-    crg_url = 'https://%s/getRawDatas' % (crg_domain,)
-    hdr = {'authority': crg_domain,
-           'origin': 'https://www.cryptoraiders.guru',
-           'referer': 'https://www.cryptoraiders.guru/',
-           'sec-fetch-site': 'cross-site',
-           'sec-fetch-mode': 'cors',
-           'sec-fetch-dest': 'empty'}
-
-    raiders = []
-    for owner in cf.nft_owners():
-        periodic(message='querying guru database for %s' % (owner,))
-        r = req_post(session, crg_url, headers=hdr,
-                     json={'data': {'id': owner}})
-        if not r.ok:
-            # XXX how to signal failure here and keep going
-            print('failed %d %s' % (r.status_code, r.reason), file=sys.stderr)
-            continue
-        data = r.json()
-        periodic(message='found data for %d raiders for %s' % (
-            len(data['data']['data']['raiders']), owner))
-        raiders.extend(data['data']['data']['raiders'])
-
-    geardb.add_multi_inventory(raiders)
-    newcount = geardb.save_to_sql(cur)
-    periodic(message='added %d new gear item(s)' % (newcount,))
+    import_raider_extended(cur, data['raiders'], periodic=periodic)
     db.commit()
 
 
@@ -871,7 +937,7 @@ def main():
                         default=None, action='store_true',
                         help='Perform database update locally')
     parser.add_argument('-G', dest='gear', default=True, action='store_false',
-                        help='Skip import from CR guru')
+                        help='Skip importing gear data')
     parser.add_argument('-R', dest='recruiting',
                         default=True, action='store_false',
                         help='Skip retrieving recruiting information')
@@ -895,6 +961,9 @@ def main():
     if cf.can_update_remote and not args.nodownload:
         maybe_download_update(periodic=periodic_print, session=session)
     db = friendly_dbopen()
+    cr_auth = GoogAuth()
+    if args.local:
+        cr_auth.ensure_login(session, periodic=periodic_print)
 
     raiders = None
     if len(args.raider):

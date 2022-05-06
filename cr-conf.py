@@ -20,15 +20,18 @@ class CRConf():
         self._conf_path = os.path.join(self._confdir, 'crutil.ini')
         self._abidir = os.path.join(self._datadir, 'abi')
         self.db_path = os.path.join(self._datadir, 'raiders.sqlite')
+        self.cr_authtoken_path = os.path.join(self._datadir, 'cr-authtok.json')
         # note: this is returned by recruiting contract method raidersAddress
         self.nft_contract = '0xfd12ec7ea4b381a79c78fe8b2248b4c559011ffb'
         # note: mounts nft is 0x7f2e8b6c55fcc5c52df495065d2147b9eab2cc54
         self.quest_returning = (None, False, True)
         self.cr_api_url = 'https://api.cryptoraiders.xyz'
+        self.cr_intapi_url = 'https://play.cryptoraiders.xyz/api'
+        self.cr_googid_api_key = 'AIzaSyCrWRMbdQvMgliiHET1GdDDf4oVKQejbvw'
         self.alchemy_api_url = 'https://polygon-mainnet.g.alchemy.com/v2'
         self.polygonscan_api_url = 'https://api.polygonscan.com/api'
-        self.crg_domain = 'europe-west3-cryptoraiders-guru.cloudfunctions.net'
-        self.crg_url = 'https://www.cryptoraiders.guru'
+        self.goog_idtk_url = 'https://www.googleapis.com/identitytoolkit/v3'
+        self.goog_sectok_url = 'https://securetoken.googleapis.com/v1/token'
         # raids refresh on wednesday, 6am UTC
         self.cr_newraid_time = (6, 0, 0)
         self.cr_weekly_raids = 7
@@ -67,6 +70,12 @@ class CRConf():
                 'cr_api_key': (
                     'Crypto Raiders API Key',
                     'An API key for cryptoraiders.xyz'),
+                'cr_email': (
+                    'Crypto Raiders email address',
+                    'Email address used to register with cryptoraiders.xyz'),
+                'cr_pass': (
+                    'Crypto Raiders password',
+                    'Password used to sign in to cryptoraiders.xyz'),
             },
             'polygon': {
                 'alchemy_api_key': (

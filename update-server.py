@@ -26,6 +26,8 @@ updater = None
 all_raider_ids = set()
 geardb = cru.geardb
 geardb_file = None
+cr_auth = cru.GoogAuth()
+cr_auth_lock = threading.Lock()
 
 
 def load_latest(path):
@@ -181,6 +183,8 @@ class BaseThread(threading.Thread):
         cru.setupdb(db)
         self._periodic()
 
+        with cr_auth_lock:
+            cr_auth.ensure_login(self._session, periodic=self._periodic)
         params.update({'periodic': self._periodic, 'session': self._session})
         info, idlist = cru.import_or_update(db, **params)
         self._periodic('Publishing database', message='dated %d/%d' % (
