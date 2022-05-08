@@ -9,7 +9,7 @@ import time
 import traceback
 
 import flask
-from flup.server.fcgi import WSGIServer
+import flup.server.fcgi
 
 cr_conf = __import__('cr-conf')
 cf = cr_conf.conf
@@ -167,9 +167,9 @@ class BaseThread(threading.Thread):
         if self._exiting:
             raise self.ExitThread()
         if section:
-            self.__lastsect = section
+            self._lastsect = section
         if message:
-            self._publish_status('%s: %s' % (self.__lastsect, message))
+            self._publish_status('%s: %s' % (self._lastsect, message))
         self._yield()
 
     def run(self):
@@ -302,7 +302,7 @@ class UpdateThread(BaseThread):
             self.__status.put(msg)
 
 
-class QuitterServer(WSGIServer):
+class QuitterServer(flup.server.fcgi.WSGIServer):
     def _intHandler(self, signum, frame):
         super()._intHandler(signum, frame)
         rebuilder.request_exit()
