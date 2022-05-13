@@ -813,7 +813,7 @@ class QuestReport(TabularReport):
         self.col_sep[6::2] = [' > '] * reward_count
         self.col_sep.append('')
 
-    def fetch(self, db, ids):
+    def fetch(self, db, ids, realname=False):
         cur = db.cursor()
 
         cur.execute('''SELECT r.id, r.level, r.name, q.contract, q.started_on,
@@ -830,7 +830,7 @@ class QuestReport(TabularReport):
                 continue
             raids, endl = get_raider_raids(cur, rid, last_daily, last_weekly)
             ret = [rid,
-                   '[%d] %s' % (level, name),
+                   (name if realname else '[%d] %s' % (level, name)),
                    raids,
                    cf.get_quest_name(address=addr, short=True),
                    reward,
@@ -847,7 +847,7 @@ class QuestReport(TabularReport):
 
 def show_quest_info(db, ids, rewards, showall=False, csvfile=None):
     report = QuestReport(reward_range=rewards)
-    tbl = list(report.fetch(db, ids))
+    tbl = list(report.fetch(db, ids, realname=bool(csvfile is not None)))
     if not showall:
         filter_idx = report.col_idx['raids']
         tbl = [i for i in tbl if i[filter_idx] > 0]
