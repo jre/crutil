@@ -33,6 +33,7 @@ class CRConf():
         self.goog_idtk_url = 'https://www.googleapis.com/identitytoolkit/v3'
         self.goog_sectok_url = 'https://securetoken.googleapis.com/v1/token'
         # raids refresh on wednesday, 6am UTC
+        self.cr_newraid_weekday = 2
         self.cr_newraid_time = (6, 0, 0)
         self.cr_weekly_raids = 7
 
