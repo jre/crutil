@@ -190,7 +190,7 @@ def fmt_timesecs_nicely(secs, adjust=0):
         return '?'
     elif secs == 0:
         return 'now'
-    dt = datetime.datetime.fromtimestamp(secs - adjust)
+    dt = datetime.datetime.utcfromtimestamp(secs + adjust)
     if ampm:
         return dt.strftime('%a %h %e %l:%M %p')
     else:
