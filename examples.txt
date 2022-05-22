@@ -47,6 +47,9 @@ If you want to see more gear combos, use -c with a count:
 Additionally, mob names can be listed to show simulation results for the mobs:
 ./cr-report.py best <raider-id> olgoHeroic robber robberHeroic
 
+Show gear combos sorted by totalaling all stats, rather than by single highest stat (minmaxed):
+./cr-report.py best <raider-id> -t
+
 
 # Fight simulator report:
 

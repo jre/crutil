@@ -375,11 +375,11 @@ class RaiderComboReport(TabularReport):
             ('damgrst', 'DamResist', 'float_1', True),
             ('total', 'Total', 'float_1', True)))
 
-    def fetch(self, db, rid):
-        _, combos = self.fetch_more(db, rid)
+    def fetch(self, db, rid, sort_total=False):
+        _, combos = self.fetch_more(db, rid, sort_total=sort_total)
         return combos
 
-    def fetch_more(self, db, rid):
+    def fetch_more(self, db, rid, sort_total=False):
         cur = db.cursor()
         slot_names, slot_stats = get_raider_slots(cur, rid)
         level = slot_names[None][0]
@@ -425,11 +425,17 @@ class RaiderComboReport(TabularReport):
                         combos.append((combo_row, diff_row, weap_row,
                                        dress_row, ring_row, neck_row))
 
-        combos.sort(key=lambda i: i[0][-1], reverse=True)
+        max_stat_idx, _ = max(enumerate(slot_stats[None]), key=lambda i: i[1])
+        if sort_total:
+            combos.sort(key=lambda i: (i[0][-1], i[0][1+max_stat_idx]),
+                        reverse=True)
+        else:
+            combos.sort(key=lambda i: (i[0][1+max_stat_idx], i[0][-1]),
+                        reverse=True)
         return set(equipped.values()), combos
 
 
-def calc_best_gear(db, rid, count, url, mobs):
+def calc_best_gear(db, rid, count, url, mobs, sort_total=False):
     mobs = tuple(mobs)
     report = RaiderComboReport()
     sim = FightSimReport(url)
@@ -448,7 +454,7 @@ def calc_best_gear(db, rid, count, url, mobs):
     cur_eff_stats = skew_stats(raw_stats)
     cur_der_stats = derive_stats(lvl, cur_eff_stats)
 
-    combos = list(report.fetch(db, rid))
+    combos = list(report.fetch(db, rid, sort_total=sort_total))
 
     def fmtstats(s):
         return ' '.join('%7d' % i for i in s)
@@ -927,6 +933,9 @@ def main():
                         help='Number of combinations to display')
     p_best.add_argument('-s', dest='url', default=cf.default_sim_url,
                         help='fight-simulator-cli serve url')
+    p_best.add_argument('-t', dest='totalsort',
+                        default=False, action='store_true',
+                        help='Sort results by total score rather than minmax')
     # XXX add -s option for best
 
     p_gear = subparsers.add_parser('gear',
@@ -1014,7 +1023,8 @@ def main():
     if args.cmd == 'gear':
         show_raider(db, rids[0])
     elif args.cmd == 'best':
-        calc_best_gear(db, rids[0], args.count, args.url, args.mob)
+        calc_best_gear(db, rids[0], args.count, args.url, args.mob,
+                       sort_total=args.totalsort)
     elif args.cmd == 'quests':
         show_quest_info(db, rids, rewards=args.count,
                         showall=args.verbose, csvfile=args.csvfile)
