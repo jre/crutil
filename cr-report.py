@@ -650,7 +650,7 @@ class FightSimReport(TabularReport):
     stat_names = ('strength', 'intelligence', 'agility',
                   'wisdom', 'charm', 'luck')
 
-    def __init__(self, url):
+    def __init__(self, url=cf.default_sim_url):
         super().__init__((
             ('raider', 'Raider', 'str', False),
             ('mob', 'Mob', 'str', False),
@@ -788,7 +788,7 @@ def colorize_times(times):
 
 
 class QuestReport(TabularReport):
-    def __init__(self, reward_range=1):
+    def __init__(self, reward_range=(1,1)):
         assert reward_range[0] >= 1 and reward_range[1] >= 1 and \
             reward_range[0] <= reward_range[1]
         self._first_reward = reward_range[0]
@@ -925,7 +925,7 @@ def main():
                         help='Update raider data first')
     p_best.add_argument('-c', dest='count', type=int, default=5,
                         help='Number of combinations to display')
-    p_best.add_argument('-s', dest='url', default='http://localhost:3000/',
+    p_best.add_argument('-s', dest='url', default=cf.default_sim_url,
                         help='fight-simulator-cli serve url')
     # XXX add -s option for best
 

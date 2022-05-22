@@ -13,6 +13,7 @@ class CRConf():
                   'main_hand', 'neck')
     stat_names = ('strength', 'intelligence', 'agility',
                   'wisdom', 'charm', 'luck')
+    default_sim_url = 'http://localhost:3000/'
 
     def __init__(self):
         self._confdir = appdirs.user_config_dir(appname)
