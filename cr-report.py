@@ -185,12 +185,12 @@ def fmt_positive_count(count):
     return '?' if count < 0 else str(count)
 
 
-def fmt_timesecs_nicely(secs, adjust=0):
+def fmt_timesecs_nicely(secs):
     if secs < 0:
         return '?'
     elif secs == 0:
         return 'now'
-    dt = datetime.datetime.utcfromtimestamp(secs + adjust)
+    dt = datetime.datetime.fromtimestamp(secs)
     if ampm:
         return dt.strftime('%a %h %e %l:%M %p')
     else:
@@ -284,15 +284,14 @@ def show_all_raiders(db, sorting=()):
     raw_tbl = list(report.fetch(db))
     report.sort(raw_tbl, sorting)
     utcnow_secs = datetime.datetime.utcnow().timestamp()
-    adj = datetime.datetime.now().timestamp() - utcnow_secs
     fmt = {
         'str': str,
         'int': str,
         'positive_count': fmt_positive_count,
         'interval_seconds': fmt_raider_timedelta,
         'delta_seconds': lambda v: fmt_timesecs_nicely(
-            v + utcnow_secs if v > 0 else v, adj),
-        'epoch_seconds': lambda v: fmt_timesecs_nicely(v, adj),
+            v + utcnow_secs if v > 0 else v),
+        'epoch_seconds': lambda v: fmt_timesecs_nicely(v),
     }
     report.print(raw_tbl, fmt)
 
@@ -862,12 +861,10 @@ def show_quest_info(db, ids, rewards, showall=False, csvfile=None):
     colors = {c: colorize_times(r[c] for r in tbl)
               for c in (sort_idx + i * 2
                         for i in range(rewards[1] - rewards[0] + 1))}
-    adj = datetime.datetime.now().timestamp() - \
-        datetime.datetime.utcnow().timestamp()
     fmt = {
         'str': str,
         'delta_seconds': fmt_raider_timedelta,
-        'epoch_seconds': lambda v: fmt_timesecs_nicely(v, adj),
+        'epoch_seconds': lambda v: fmt_timesecs_nicely(v),
         'positive_count': fmt_positive_count,
     }
     if csvfile is not None:
