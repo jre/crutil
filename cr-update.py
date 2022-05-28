@@ -341,7 +341,7 @@ class GoogAuth():
                 'returnSecureToken': True}
         r = req_post(session, url, params=params, json=body)
         data = r.json()
-        periodic(message='POST %s -> %d %s' % (url, r.status_code, data))
+        periodic(message='POST %s -> %d' % (url, r.status_code))
         if not r.ok or 'error' in data:
             self._login_error(r)
         data['cru_expire_secs'] = timestamp_utc() + int(data['expiresIn'])
@@ -374,7 +374,7 @@ class GoogAuth():
         body = {'idToken': self._data['idToken']}
         r = req_post(session, url, params=params, json=body)
         data = r.json()
-        periodic(message='POST %s -> %d %s' % (url, r.status_code, data))
+        periodic(message='POST %s -> %d' % (url, r.status_code))
         if r.ok:
             return True
         elif data.get('error', {}).get('message') == 'INVALID_ID_TOKEN':
@@ -388,8 +388,7 @@ class GoogAuth():
                 'refresh_token': self._data['refreshToken']}
         r = req_post(session, cf.goog_sectok_url, params=params, data=body)
         data = r.json()
-        periodic(message='POST %s -> %d %s' % (
-            cf.goog_sectok_url, r.status_code, data))
+        periodic(message='POST %s -> %d' % (cf.goog_sectok_url, r.status_code))
         if not r.ok or 'error' in data:
             self._login_error(r)
         self._data['refreshToken'] = data['refresh_token']
