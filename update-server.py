@@ -41,7 +41,8 @@ def load_latest(path):
 def update_latest(info):
     global latest
     with latest_lock:
-        if (info['snapshot-started'] < latest.get('snapshot-started', 0) or
+        if (info['schema-version'] != latest.get('schema-version') or
+            info['snapshot-started'] < latest.get('snapshot-started', 0) or
             (info['snapshot-started'] == latest.get('snapshot-started', 0) and
              info['snapshot-updated'] <= latest.get('snapshot-updated', 0))):
             return
