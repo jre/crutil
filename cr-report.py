@@ -104,7 +104,7 @@ def last_daily_refresh(now):
 
 
 def last_weekly_refresh(now):
-    today = datetime.date.fromtimestamp(now.timestamp())
+    today = datetime.date.fromtimestamp(cru.timestamp_utc(now))
     if today.weekday() > cf.cr_newraid_weekday:
         future_wed_delta = 7 - (today.weekday() - cf.cr_newraid_weekday)
     else:
@@ -125,11 +125,11 @@ def get_raider_raids(cur, rid, last_daily, last_weekly):
     if len(rows) == 0:
         return -1, -1
     raids_left, last_raid, last_endless = rows[0]
-    if last_raid < last_weekly.timestamp():
+    if last_raid < cru.timestamp_utc(last_weekly):
         raids_left = cf.cr_weekly_raids
     if not last_endless:
         return raids_left, -1
-    endless_left = int(last_endless < last_daily.timestamp())
+    endless_left = int(last_endless < cru.timestamp_utc(last_daily))
     return raids_left, endless_left
 
 
@@ -139,7 +139,7 @@ def get_raider_recruiting(cur, rid, now):
     if len(rows) == 0:
         return -2, -1
     next, cost = rows[0]
-    if next and next > now.timestamp():
+    if next and next > cru.timestamp_utc(now):
         return next, cost
     else:
         return 0, cost
@@ -153,7 +153,7 @@ def get_raider_questing(cur, rid, now):
         return '?', -1
     status, started_on, return_div, reward_secs, returns_on = rows[0]
     is_returning = cf.quest_returning[status]
-    now_secs = now.timestamp()
+    now_secs = cru.timestamp_utc(now)
 
     if is_returning is None:
         status_str = 'no'
@@ -283,7 +283,7 @@ def show_all_raiders(db, sorting=()):
     report = RaiderListReport()
     raw_tbl = list(report.fetch(db))
     report.sort(raw_tbl, sorting)
-    utcnow_secs = datetime.datetime.utcnow().timestamp()
+    utcnow_secs = cru.timestamp_utc()
     fmt = {
         'str': str,
         'int': str,
@@ -826,7 +826,7 @@ class QuestReport(TabularReport):
             WHERE r.id = q.raider AND q.status = 1 ORDER BY r.id''')
         ids = set(ids)
         now = datetime.datetime.utcnow()
-        now_secs = int(now.timestamp())
+        now_secs = cru.timestamp_utc(now)
         last_daily = last_daily_refresh(now)
         last_weekly = last_weekly_refresh(now)
         rows = list(cur.fetchall())

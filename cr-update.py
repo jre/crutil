@@ -1,5 +1,6 @@
 #!./venv/bin/python
 import argparse
+import calendar
 import contextlib
 import datetime
 import json
@@ -17,7 +18,7 @@ cr_conf = __import__('cr-conf')
 cf = cr_conf.conf
 cr_report = __import__('cr-report')
 
-schema_version = 2
+schema_version = 3
 
 
 class DBVersionError(Exception):
@@ -164,8 +165,14 @@ def schema_upgrade_v2(db):
     db.commit()
 
 
+def schema_upgrade_v3(db):
+    # V3 exists to ensure a new db is considered newer after fixing timestamp
+    # calculation. There is no automatic upgrade, just rebuild your db.
+    pass
+
+
 def checkdb(db):
-    upgrades = (schema_upgrade_v1, schema_upgrade_v2)
+    upgrades = (schema_upgrade_v1, schema_upgrade_v2, schema_upgrade_v3)
     cur = db.cursor()
     try:
         cur.execute('SELECT value FROM meta WHERE name = ?',
@@ -337,8 +344,7 @@ class GoogAuth():
         periodic(message='POST %s -> %d %s' % (url, r.status_code, data))
         if not r.ok or 'error' in data:
             self._login_error(r)
-        now = datetime.datetime.utcnow()
-        data['cru_expire_secs'] = int(now.timestamp()) + int(data['expiresIn'])
+        data['cru_expire_secs'] = timestamp_utc() + int(data['expiresIn'])
         self._data = data
         self._do_save()
         return True
@@ -353,8 +359,7 @@ class GoogAuth():
 
         if not self._data:
             self._do_login(session, periodic=periodic)
-        now = datetime.datetime.utcnow()
-        if now.timestamp() > self._data.get('cru_expire_secs', 0):
+        if timestamp_utc() > self._data.get('cru_expire_secs', 0):
             self.refresh_token(session, periodic=periodic)
         if not self.verify_token(session, periodic=periodic):
             if not self._do_login(session, periodic=periodic) or \
@@ -387,9 +392,8 @@ class GoogAuth():
             cf.goog_sectok_url, r.status_code, data))
         if not r.ok or 'error' in data:
             self._login_error(r)
-        now = datetime.datetime.utcnow()
         self._data['refreshToken'] = data['refresh_token']
-        self._data['cru_expire_secs'] = int(now.timestamp()) + \
+        self._data['cru_expire_secs'] = timestamp_utc() + \
             int(data['expires_in'])
         self._do_save()
 
@@ -606,8 +610,15 @@ def import_raider_extended(cur, raiders, periodic=noop):
 
 
 def iso_datetime_to_secs(isotime):
+    assert isotime.endswith('Z')
     dt = datetime.datetime.fromisoformat(isotime.rstrip('Z'))
-    return int(dt.timestamp())
+    return timestamp_utc(dt)
+
+
+def timestamp_utc(when=None):
+    if when is None:
+        when = datetime.datetime.utcnow()
+    return int(calendar.timegm(when.utctimetuple()))
 
 
 def import_raider_gear(db, periodic=noop, session=None):
@@ -648,7 +659,7 @@ def import_raider_recruitment(db, idlist, full=False,
             periodic()
             changed = True
 
-        utcnow_secs = datetime.datetime.utcnow().timestamp()
+        utcnow_secs = timestamp_utc()
         if next_time is None or next_time < utcnow_secs:
             if recruiting.canRaiderRecruit(rid).call():
                 next_time = 0
@@ -712,7 +723,7 @@ def import_raider_quests(db, idlist, questing_ids=None,
         if returning is None:
             sql_insert(params)
             continue
-        utcnow_secs = datetime.datetime.utcnow().timestamp()
+        utcnow_secs = timestamp_utc()
         if returning:
             try:
                 delta = myquest.timeTillHome(rid).call()
@@ -763,9 +774,9 @@ def import_or_update(db, started_at=None, raiders=None, basic=True, gear=True,
             started_at = datetime.datetime.utcnow()
         periodic('Updating all raiders')
         cur.execute('INSERT OR REPLACE INTO meta (name, value) VALUES (?, ?)',
-                    ('snapshot-started', int(started_at.timestamp())))
+                    ('snapshot-started', timestamp_utc(started_at)))
         db.commit()
-        info['snapshot-started'] = int(started_at.timestamp())
+        info['snapshot-started'] = timestamp_utc(started_at)
         need_finish = True
         raiders, questers = import_all_raiders(db, **p)
     else:
@@ -783,11 +794,11 @@ def import_or_update(db, started_at=None, raiders=None, basic=True, gear=True,
 
     finished_at = datetime.datetime.utcnow()
     cur.execute('INSERT OR REPLACE INTO meta (name, value) VALUES (?, ?)',
-                ('snapshot-updated', int(finished_at.timestamp())))
-    info['snapshot-updated'] = int(finished_at.timestamp())
+                ('snapshot-updated', timestamp_utc(finished_at)))
+    info['snapshot-updated'] = timestamp_utc(finished_at)
     if need_finish:
         cur.execute('INSERT OR REPLACE INTO meta (name, value) VALUES (?, ?)',
-                    ('snapshot-finished', int(finished_at.timestamp())))
+                    ('snapshot-finished', timestamp_utc(finished_at)))
     db.commit()
     return info, raiders
 
