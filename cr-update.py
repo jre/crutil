@@ -897,7 +897,7 @@ def maybe_download_update(periodic=noop, session=None):
         return
 
     if latest['schema-version'] != schema_version:
-        print(schema_version_advice(latest['schema-version']),
+        print(schema_version_advice(latest['schema-version'], 'remote'),
               file=sys.stderr)
         sys.exit(1)
     elif (latest['snapshot-started'] > current['snapshot-started'] or
@@ -915,19 +915,21 @@ def maybe_download_update(periodic=noop, session=None):
                      latest['snapshot-started'], latest['snapshot-updated']))
 
 
-def schema_version_advice(version):
+def schema_version_advice(version, source):
     if version > schema_version:
-        return 'Database is too new for this code, try git pull?'
+        return ('Database (%s v%d) is too new for this code (v%d), ' +
+                'try git pull?') % (source, version, schema_version)
     elif version < schema_version:
-        return 'Database is too old for this code, are you on a branch?'
+        return ('Database (%s v%d) is too old for this code (v%d), ' +
+                'are you on a branch?') % (source, version, schema_version)
 
 
 def friendly_dbopen():
     try:
         db = cf.opendb()
     except DBVersionError as exc:
-        print('%s\n%s' % (exc.args[0], schema_version_advice(exc.version)),
-              file=sys.stderr)
+        print('%s\n%s' % (exc.args[0], schema_version_advice(
+            exc.version, 'local')), file=sys.stderr)
         sys.exit(1)
     setupdb(db)
     return db
